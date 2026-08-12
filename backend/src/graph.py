@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
 from src.config import config
+import time
+from functools import wraps
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -31,8 +33,24 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Checkpointing (same pattern as reference)
+# Checkpointing & Instrumentation
 # =============================================================================
+
+def timed_node(stage_name: str):
+    def decorator(fn):
+        @wraps(fn)
+        async def wrapper(state: ResearchState):
+            start = time.perf_counter()
+            result = await fn(state)
+            elapsed = time.perf_counter() - start
+            if isinstance(result, dict) and "error" not in result:
+                existing = dict(state.stage_timings)
+                existing[stage_name] = existing.get(stage_name, 0.0) + elapsed
+                result["stage_timings"] = existing
+            logger.info(f"[timing] {stage_name}: {elapsed:.2f}s")
+            return result
+        return wrapper
+    return decorator
 
 def get_checkpoint_path() -> Path:
     cache_dir = Path(".cache/checkpoints")
@@ -59,12 +77,12 @@ def create_research_graph(checkpointer=None):
 
     workflow = StateGraph(ResearchState)
 
-    workflow.add_node("plan", planner.plan)
-    workflow.add_node("search", retriever.search)
-    workflow.add_node("extract_claims", claim_extractor.extract)
-    workflow.add_node("verify", verifier.verify)
+    workflow.add_node("plan", timed_node("plan")(planner.plan))
+    workflow.add_node("search", timed_node("search")(retriever.search))
+    workflow.add_node("extract_claims", timed_node("extract_claims")(claim_extractor.extract))
+    workflow.add_node("verify", timed_node("verify")(verifier.verify))
     workflow.add_node("check_retry", check_retry)
-    workflow.add_node("synthesize", synthesizer.synthesize)
+    workflow.add_node("synthesize", timed_node("synthesize")(synthesizer.synthesize))
 
     workflow.add_edge(START, "plan")
 
@@ -146,6 +164,15 @@ async def run_research(
 
     try:
         final_state = await graph.ainvoke(initial_state, config=run_config or None)
+        
+        timings = final_state.get("stage_timings", {}) if isinstance(final_state, dict) else {}
+        if timings:
+            total = sum(timings.values())
+            logger.info("=== Stage timing breakdown ===")
+            for stage, t in sorted(timings.items(), key=lambda x: -x[1]):
+                logger.info(f"  {stage}: {t:.2f}s ({t/total:.0%})")
+            logger.info(f"  TOTAL: {total:.2f}s")
+
     except Exception as e:
         logger.error(f"Research workflow failed: {e}")
         raise

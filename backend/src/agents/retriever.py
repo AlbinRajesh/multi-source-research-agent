@@ -48,12 +48,18 @@ class RetrieverAgent:
             all_results = await self.extractor.enhance_results(all_results)
             combined = dedup_results(state.search_results + all_results)
             filtered = self.scorer.filter_results(combined, min_score=config.min_credibility_score)
+            
+            # --- BUG 20 FIX: Prioritize and cap documents by credibility score ---
+            scored = sorted(filtered, key=lambda r: self.scorer.score_url(r.url)["score"], reverse=True)
+            filtered = scored[:config.max_docs_for_extraction]
+            # --------------------------------------------------------------------
+
             credibility_scores = [self.scorer.score_url(r.url) for r in filtered]
 
-            logger.info(f"Retrieved {len(all_results)} -> {len(filtered)} after dedup+credibility (accumulated)")
+            logger.info(f"Retrieved {len(all_results)} -> {len(filtered)} after dedup+credibility (capped & accumulated)")
 
             return {
-                "search_results": filtered,           # full deduped accumulated set, not delta
+                "search_results": filtered,          # full deduped accumulated set, capped for Groq free-tier
                 "credibility_scores": credibility_scores,
                 "current_stage": "extracting_claims",
                 "iterations": state.iterations + 1,

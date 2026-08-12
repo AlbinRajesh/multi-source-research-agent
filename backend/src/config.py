@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     max_search_queries: int = 5
     max_search_results_per_query: int = 5
     min_credibility_score: int = 40
+    max_docs_for_extraction: int = 8
 
     # Verification
     min_claims_verified_ratio: float = 0.6  # trigger retry loop if below this

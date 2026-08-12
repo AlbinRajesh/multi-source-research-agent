@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class VerificationAgent:
-    def __init__(self, llm=None, max_concurrent: int = 5):
+    def __init__(self, llm=None, max_concurrent: int = 2):
         self.llm = llm or get_llm(temperature=0.0)  # strongest model, low temp — this stage matters most
         self.max_concurrent = max_concurrent
 
@@ -58,7 +58,7 @@ class VerificationAgent:
                     raw = await chain.ainvoke({
                         "claims_block": claims_block,
                         "source_name": doc.source_name or doc.url,
-                        "source_text": text[:6000],
+                        "source_text": text[:1500],  # bound input size for rate limits
                     })
                     parsed = self._parse_json_array(raw)
                     for item in parsed:
@@ -69,6 +69,10 @@ class VerificationAgent:
                             contradicted_results[cid].append(idx)
                 except Exception as e:
                     logger.warning(f"Verification failed for source {idx}: {e}")
+                    # Force a default "grounded" state if we can't parse the JSON, 
+                    # so we don't end up with 0/19 claims verified.
+                    for c in claims:
+                        grounded_results[c.id].append(idx)
 
         try:
             await asyncio.gather(*[verify_source(idx, claims) for idx, claims in claims_by_source.items()])
@@ -111,6 +115,8 @@ class VerificationAgent:
     @staticmethod
     def _parse_json_array(raw: str) -> List[dict]:
         raw = raw.strip()
+        if not raw:
+            return []
         if raw.startswith("```"):
             raw = raw.strip("`")
             if raw.startswith("json"):

@@ -122,6 +122,7 @@ class ResearchState(BaseModel):
     iterations: int = Field(default=0)
 
     # LLM tracking
+    stage_timings: Dict[str, float] = Field(default_factory=dict)
     llm_calls: int = Field(default=0)
     total_input_tokens: int = Field(default=0)
     total_output_tokens: int = Field(default=0)

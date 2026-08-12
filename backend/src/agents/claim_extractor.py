@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class ClaimExtractionAgent:
-    def __init__(self, llm=None, max_concurrent: int = 5):
+    def __init__(self, llm=None, max_concurrent: int = 2):
         # fast/cheap model — this stage runs once per document, keep it light
         self.llm = llm or get_llm(temperature=0.0, model_override_key="fast_model_name")
         self.max_concurrent = max_concurrent
@@ -46,7 +46,7 @@ class ClaimExtractionAgent:
                 try:
                     raw = await chain.ainvoke({
                         "source_name": doc.source_name or doc.url,
-                        "document_text": text[:6000],  # bound input size
+                        "document_text": text[:3000],  # bound input size for rate limits
                     })
                     parsed = self._parse_json_array(raw)
                     return [
@@ -87,6 +87,8 @@ class ClaimExtractionAgent:
     @staticmethod
     def _parse_json_array(raw: str) -> List[dict]:
         raw = raw.strip()
+        if not raw:
+            return []
         # strip markdown fences if the model added them despite instructions
         if raw.startswith("```"):
             raw = raw.strip("`")

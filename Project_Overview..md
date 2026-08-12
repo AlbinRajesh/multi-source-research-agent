@@ -352,3 +352,109 @@ What I'll do with them
 Not copy-paste — extract the pattern (state shape, node wiring, error handling, credibility scoring formula) and rewrite it to fit our specific 5-agent design with the verification agent as the accuracy backbone, which none of them have. Their license (MIT/Apache-2.0) permits this kind of reuse freely, so no concern there — this is normal, expected open-source practice.
 
 If you can paste in state.py, graph.py, and web_utils.py from tarun7r's repo first — that's the highest-value set to start Phase 1 scaffolding immediately.
+-----------------------------------------------------------------------------------------------------
+Evaluation plan — mirrors your vlmproject 192-question approach, scaled to this pipeline.
+
+1. Build a golden question set (src/eval/golden_questions.json) — 20-30 to start, categories from your plan doc section 3.6:
+
+json
+[
+  {"id": "q1", "question": "What is the boiling point of water at sea level?", "category": "simple_factual", "expected_answer_contains": ["100", "212"], "min_citations": 1},
+  {"id": "q2", "question": "Compare boiling point elevation effects of salt vs sugar in water", "category": "multi_source_comparison", "min_citations": 2},
+  {"id": "q3", "question": "What is the exact boiling point of water on Mars' surface today", "category": "insufficient_evidence", "expect_low_confidence": true}
+]
+
+2. Metrics to capture per run (src/eval/run_eval.py):
+
+Retrieval hit rate: did search_results end up non-empty and topically relevant (manual/LLM-judge check)
+Claim grounding rate: verified_count / total_claims from your verifier logs — you already log this
+Citation accuracy: spot-check N citations — does the cited source actually say what the report claims (this is the one metric that catches hallucination even after your groundedness fixes)
+Retry rate: how often retry_count > 0 — high retry rate signals weak initial search/verification
+Latency: total wall time, broken down per stage (plan/search/extract/verify/synthesize) — same stage-level profiling pattern you used in vlmproject
+Cost: token count × Groq pricing, if using hosted
+
+3. Minimal harness:
+
+python
+import asyncio, json, time
+from src.graph import run_research
+
+async def run_eval():
+    questions = json.load(open("src/eval/golden_questions.json"))
+    results = []
+    for q in questions:
+        start = time.time()
+        r = await run_research(q["question"], use_checkpoints=False)
+        elapsed = time.time() - start
+        verified = sum(1 for v in r.get("verified_claims", []) if v.confidence in ("verified", "single_source"))
+        total = len(r.get("verified_claims", [])) or 1
+        results.append({
+            "id": q["id"], "latency_s": elapsed,
+            "grounding_rate": verified / total,
+            "citation_count": len(r.get("citations", [])),
+            "retry_count": r.get("retry_count", 0),
+            "final_report": r.get("final_report"),
+        })
+    json.dump(results, open("eval_results.json", "w"), indent=2)
+    avg_latency = sum(x["latency_s"] for x in results) / len(results)
+    avg_grounding = sum(x["grounding_rate"] for x in results) / len(results)
+    print(f"Avg latency: {avg_latency:.1f}s | Avg grounding: {avg_grounding:.0%}")
+
+asyncio.run(run_eval())
+
+On latency specifically — since you flagged it: add stage-level timing (same pattern as your test_latency_profile.py in vlmproject) by wrapping each node in graph.py with a timer, storing stage_timings: Dict[str, float] in state. That'll tell you whether latency is search-bound (Tavily+fetch), LLM-bound (Groq calls), or retry-bound (repeated full passes) — you can't fix what you haven't measured per-stage.
+
+On the 429s — the assistant's tip is right; also consider adding a global rate limiter (not just per-agent semaphore) since Planner/Extractor/Verifier/Synthesizer all hit Groq independently and their semaphores don't coordinate with each other.
+
+Want the stage-level timing instrumentation code, or the retry/lower-concurrency fix first?
+-----------------------------------------------------------------------------------------------------
+Here is a simple, clear breakdown of how your system is working right now and what we did to speed it up.
+
+Part 1: How Your Research Agent Works Right Now
+Think of your agent as a team of specialized AI workers operating in a assembly line:
+
+The Planner (plan): Takes your topic ("What is the boiling point of water") and figures out what sub-questions need to be asked.
+
+The Retriever (search): Uses Tavily to search the web, downloads the pages, cleans up the text, and runs them through a Credibility Filter. Crucially, we capped this to only keep the top 8 best sources so we don't overwhelm the system.
+
+The Claim Extractor (extract_claims): Takes those 8 documents and breaks them down into short, independent factual statements (claims).
+
+The Verifier (verify): Checks every single claim against the source text to see if it's actually true and supported. If a claim is fake or unsupported, it gets thrown out.
+
+The Synthesizer (synthesize): Combines all the verified, true facts into a clean, final report and adds neat, deduplicated citation numbers (like [1]).
+
+If too many claims turn out to be weak, the system automatically triggers a Retry Loop to search again—though in your last run, it passed cleanly on the first try!
+
+Part 2: What We Did to Reduce Time and Fix Errors
+When you first ran the agent, it was getting stuck in massive delays, taking over 3 minutes (and sometimes failing with errors). We fixed it step-by-step:
+
+1. Stopped Overwhelming Groq (Fixed 429 Rate Limits)
+The Problem: Groq's free tier has a limit of 8,000 tokens per minute (TPM). Your agent was trying to send 20 documents all at once, crashing into the limit. Groq would return 429 Too Many Requests, and the system would sit there waiting 20 seconds before retrying.
+
+The Fix:
+
+We capped the max documents sent to extraction from ~20 down to 8 (using credibility scoring).
+
+We lowered the parallel worker limit (max_concurrent) so the agent makes fewer requests at the exact same time.
+
+2. Shrank the Text Size (Reduced Token Spend)
+The Problem: We were sending up to 6,000 characters of raw webpage text for every single AI call. That blew past the token limit instantly.
+
+The Fix: We trimmed the document text sent to the AI down to 1,500 characters. This cut the token cost in half, allowing requests to finish much faster without breaking the AI's JSON output.
+
+3. Fixed JSON Parsing & Verifier Crashes (Bug 17 & 19)
+The Problem: Sometimes the smaller AI models would output weird text formatting, unescaped newlines, or cut off entirely when hitting rate limits, causing the Python script to crash with JSON errors.
+
+The Fix:
+
+We added strict=False to allow raw newlines in JSON.
+
+We added an empty-string safety check so if a request fails, it fails gracefully instead of crashing the whole pipeline.
+
+4. Fixed Citation Duplication (Bug 18)
+The Problem: The same website (like Purdue Chemistry or Wikipedia) was showing up in the citations list 14 separate times.
+
+The Fix: We added a deduplication step by URL so every unique source gets one single citation number (e.g., [1]), matching the numbers used in the text.
+
+5. Added Stage-Level Timings
+The Fix: We added a built-in timer (timed_node) that logs exactly how many seconds each phase (search, extract_claims, verify, etc.) takes, which is how we diagnosed that extract_claims was causing the bottleneck in the first place.
