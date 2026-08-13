@@ -4,8 +4,8 @@ Adapted from a LangGraph reference research-agent pattern, extended with
 Claim Extraction + Verification stages for claim-level groundedness checking
 (not just source-level credibility scoring).
 """
-from typing import List, Dict, Optional, Literal
 from pydantic import BaseModel, Field
+from typing import List, Dict, Optional, Literal, Any
 
 
 # =============================================================================
@@ -20,12 +20,12 @@ class SearchQuery(BaseModel):
     )
     completed: bool = Field(default=False)
 
-
 class ResearchPlan(BaseModel):
     topic: str
     objectives: List[str]
     search_queries: List[SearchQuery]
     report_outline: List[str]
+    complexity: Literal["simple", "moderate", "complex"] = "moderate"
 
 
 # =============================================================================
@@ -99,19 +99,25 @@ class ResearchState(BaseModel):
 
     # Added Workflow Tracking Fields
     processed_result_indices: List[int] = Field(default_factory=list)
-    route_decision: Optional[Literal["search", "synthesize"]] = Field(default=None)
+    route_decision: Optional[Literal["search", "synthesize", "plan", "refine_search"]] = Field(default=None)
 
     # Claim extraction + verification (our added stages)
     claims: List[Claim] = Field(default_factory=list)
     verified_claims: List[VerificationVerdict] = Field(default_factory=list)
     retry_count: int = Field(default=0)
     max_retries: int = Field(default=2)
+    retry_feedback: list[str] = []      
+    confirmed_claims: list = []  
+    weak_claims_to_resolve: list = []
 
     # Synthesis / report
     key_findings: List[str] = Field(default_factory=list)
     report_sections: List[ReportSection] = Field(default_factory=list)
     final_report: Optional[str] = Field(default=None)
     citations: List[Dict] = Field(default_factory=list)
+
+    #Tracker
+    token_tracker: Any = None
 
     # Workflow control
     current_stage: Literal[

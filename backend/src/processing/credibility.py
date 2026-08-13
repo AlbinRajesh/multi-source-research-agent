@@ -14,14 +14,41 @@ logger = logging.getLogger(__name__)
 
 class CredibilityScorer:
     TRUSTED_DOMAINS = {
+        # Academic / government
         '.edu', '.ac.uk', '.ac.in', '.edu.in', '.edu.au', '.ac.jp',
         '.gov', '.gov.uk', '.gov.au', '.gov.ca', '.gov.in', '.europa.eu',
+
+        # Wire services / major news
         'bbc.com', 'reuters.com', 'ap.org', 'npr.org', 'theguardian.com',
         'nytimes.com', 'washingtonpost.com', 'wsj.com', 'ft.com',
-        'economist.com', 'bloomberg.com', 'arxiv.org', 'scholar.google.com',
-        'pubmed.ncbi.nlm.nih.gov', 'nih.gov', 'nature.com', 'sciencedirect.com',
-        'ieee.org', 'jstor.org', 'who.int', 'un.org', 'worldbank.org',
-        'wikipedia.org',
+        'economist.com', 'bloomberg.com',
+
+        # Reference / encyclopedic
+        'wikipedia.org', 'britannica.com',
+
+        # Academic / scientific publishing
+        'arxiv.org', 'scholar.google.com', 'pubmed.ncbi.nlm.nih.gov',
+        'nih.gov', 'nature.com', 'sciencedirect.com', 'ieee.org', 'jstor.org',
+        'springer.com', 'acm.org',
+
+        # International orgs
+        'who.int', 'un.org', 'worldbank.org',
+
+        # Business / general-interest press — added: were incorrectly
+        # scoring as "standard unverified" despite being major
+        # mainstream outlets, causing well-known/legitimate sources to
+        # be filtered on ordinary queries (e.g. Forbes, Business Insider,
+        # Yahoo Finance all scored 30 and were dropped on a basic
+        # "who is X" biography lookup)
+        'forbes.com', 'businessinsider.com', 'finance.yahoo.com',
+        'yahoo.com', 'cnbc.com', 'techcrunch.com', 'theverge.com',
+        'wired.com', 'time.com', 'usatoday.com', 'apnews.com',
+        'axios.com', 'fortune.com',
+
+        # Company/official sources — a company's own blog/newsroom is a
+        # primary source for facts about that company (e.g. blog.google
+        # for Google/Alphabet leadership facts)
+        'blog.google', 'about.google', 'newsroom.',
     }
 
     SUSPICIOUS_PATTERNS = [
@@ -34,7 +61,7 @@ class CredibilityScorer:
         if not url:
             return {'score': 0, 'factors': ['No URL'], 'level': 'low'}
 
-        score = 50
+        score = 25
         factors = []
 
         try:
@@ -43,20 +70,20 @@ class CredibilityScorer:
 
             for trusted in self.TRUSTED_DOMAINS:
                 if trusted in domain:
-                    score += 30
+                    score += 40
                     factors.append(f'Trusted domain: {trusted}')
                     break
 
             for pattern in self.SUSPICIOUS_PATTERNS:
                 if re.search(pattern, domain):
-                    score -= 20
+                    score -= 25
                     factors.append(f'Suspicious pattern: {pattern}')
                     break
 
             if parsed.scheme == 'https':
                 score += 5
             else:
-                score -= 10
+                score -= 15
 
             score = max(0, min(100, score))
             level = 'high' if score >= 70 else 'medium' if score >= 40 else 'low'
@@ -64,14 +91,23 @@ class CredibilityScorer:
             return {'score': score, 'factors': factors or ['Standard domain'], 'level': level, 'domain': domain}
         except Exception as e:
             logger.warning(f"Error scoring URL {url}: {e}")
-            return {'score': 30, 'factors': ['Scoring error'], 'level': 'low'}
+            return {'score': 20, 'factors': ['Scoring error'], 'level': 'low'}
 
     def filter_results(self, results: List, min_score: int = 40) -> List:
-        """Filter search results by minimum credibility score (pre-filter, not final trust)."""
         kept = []
+        scores = []
         for r in results:
             cred = self.score_url(r.url)
+            scores.append(cred['score'])
             if cred['score'] >= min_score:
                 kept.append(r)
+            else:
+                logger.info(f"Filtered out low credibility source ({cred['score']}): {r.url}")
+
         logger.info(f"Credibility pre-filter: {len(results)} -> {len(kept)} (min_score={min_score})")
+        if scores:
+            logger.info(
+                f"[credibility_dist] min={min(scores)} max={max(scores)} "
+                f"avg={sum(scores) / len(scores):.1f} n={len(scores)}"
+            )
         return kept

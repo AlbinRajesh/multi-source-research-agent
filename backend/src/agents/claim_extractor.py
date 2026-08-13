@@ -2,11 +2,13 @@
 independently checkable claims. New stage vs. the reference project;
 this is what makes claim-level verification (next stage) possible.
 """
+import re
 import asyncio
 import json
 import logging
 import uuid
 from typing import Dict, Any, List
+from src.config import config
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -15,15 +17,38 @@ from src.state import ResearchState, Claim
 from src.prompts.claim_extraction_prompt import CLAIM_EXTRACTION_SYSTEM_PROMPT, CLAIM_EXTRACTION_USER_TEMPLATE
 from src.utils.llm_factory import get_llm
 from src.exceptions import ClaimExtractionError
+from metrics.token_counter import track_llm_call
 
 logger = logging.getLogger(__name__)
 
 
 class ClaimExtractionAgent:
+    MAX_CLAIMS_PER_DOC = 6  # deterministic ceiling — do not rely on prompt compliance alone
+
+    BOILERPLATE_PATTERNS = [
+        r"^\[.*\]\(#.*\)",              # markdown anchor links, e.g. [Skip Navigation](#MainContent)
+        r"\bsubscribe\b.*\bpro\b",       # subscription CTAs
+        r"__source=|tpcc=|utm_",         # tracking query params leaking into text
+        r"^(cookie|privacy) (policy|notice|settings)",
+        r"^(home|menu|navigation|sign in|log in|sign up)$",
+    ]
+
     def __init__(self, llm=None, max_concurrent: int = 2):
         # fast/cheap model — this stage runs once per document, keep it light
-        self.llm = llm or get_llm(temperature=0.0, model_override_key="fast_model_name")
+        self.llm = llm or get_llm(
+            temperature=0.0,
+            model_override=config.claim_extraction_model,
+            provider_override="ollama",
+            max_tokens=600,  # bounds generation length -> bounds both latency and claim count
+        )
         self.max_concurrent = max_concurrent
+        self.model_name = config.claim_extraction_model
+        self._boilerplate_re = re.compile("|".join(self.BOILERPLATE_PATTERNS), re.IGNORECASE)
+
+    def _is_boilerplate(self, text: str) -> bool:
+        if not text or len(text.strip()) < 15:
+            return True  # too short to be a real claim
+        return bool(self._boilerplate_re.search(text))
 
     async def extract(self, state: ResearchState) -> Dict[str, Any]:
         if not state.search_results:
@@ -44,11 +69,29 @@ class ClaimExtractionAgent:
                 return []
             async with semaphore:
                 try:
-                    raw = await chain.ainvoke({
-                        "source_name": doc.source_name or doc.url,
-                        "document_text": text[:3000],  # bound input size for rate limits
-                    })
+                    raw = await track_llm_call(
+                        chain,
+                        {
+                            "source_name": doc.source_name or doc.url,
+                            "document_text": text[:3000],  # bound input size for rate limits
+                        },
+                        tracker=state.token_tracker,
+                        node="extract_claims",
+                        model=self.model_name,
+                    )
                     parsed = self._parse_json_array(raw)
+
+                    # Filter boilerplate BEFORE capping, so the cap counts real claims, not junk
+                    parsed = [item for item in parsed if not self._is_boilerplate(item.get("text", ""))]
+
+                    # HARD CAP — deterministic, independent of prompt compliance.
+                    if len(parsed) > self.MAX_CLAIMS_PER_DOC:
+                        logger.info(
+                            f"[claim_cap] {doc.url}: model returned {len(parsed)} valid claims, "
+                            f"capping to {self.MAX_CLAIMS_PER_DOC}"
+                        )
+                        parsed = parsed[: self.MAX_CLAIMS_PER_DOC]
+
                     return [
                         Claim(
                             id=str(uuid.uuid4())[:8],

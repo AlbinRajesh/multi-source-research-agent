@@ -19,6 +19,7 @@ from src.state import ResearchState, VerificationVerdict
 from src.prompts.verification_prompt import VERIFICATION_SYSTEM_PROMPT, VERIFICATION_USER_TEMPLATE
 from src.utils.llm_factory import get_llm
 from src.exceptions import VerificationError
+from metrics.token_counter import track_llm_call
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class VerificationAgent:
     def __init__(self, llm=None, max_concurrent: int = 2):
         self.llm = llm or get_llm(temperature=0.0)  # strongest model, low temp — this stage matters most
         self.max_concurrent = max_concurrent
+        self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")
 
     async def verify(self, state: ResearchState) -> Dict[str, Any]:
         if not state.claims:
@@ -55,11 +57,17 @@ class VerificationAgent:
             claims_block = "\n".join(f'- id: {c.id} | "{c.text}"' for c in claims)
             async with semaphore:
                 try:
-                    raw = await chain.ainvoke({
-                        "claims_block": claims_block,
-                        "source_name": doc.source_name or doc.url,
-                        "source_text": text[:1500],  # bound input size for rate limits
-                    })
+                    raw = await track_llm_call(
+                        chain,
+                        {
+                            "claims_block": claims_block,
+                            "source_name": doc.source_name or doc.url,
+                            "source_text": text[:1500],  # bound input size for rate limits
+                        },
+                        tracker=state.token_tracker,
+                        node="verify",
+                        model=self.model_name,
+                    )
                     parsed = self._parse_json_array(raw)
                     for item in parsed:
                         cid = item.get("claim_id")

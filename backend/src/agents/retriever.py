@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 class RetrieverAgent:
+    MAX_CONCURRENT_SEARCHES = 5  # stay comfortably under the Tavily connection pool (size 10)
+
     def __init__(self, search_provider=None, extractor=None, scorer=None):
         self.search_provider = search_provider or self._get_default_provider()
         self.extractor = extractor or ContentExtractor()
@@ -36,30 +38,29 @@ class RetrieverAgent:
         web_queries = [q for q in state.plan.search_queries if q.source_hint in ("web", "both")]
 
         try:
-            # parallel fan-out across sub-queries
-            tasks = [
-                self.search_provider.search(q.query, max_results=config.max_search_results_per_query)
-                for q in web_queries
-            ]
+            semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_SEARCHES)
+
+            async def bounded_search(q):
+                async with semaphore:
+                    return await self.search_provider.search(q.query, max_results=config.max_search_results_per_query)
+
+            tasks = [bounded_search(q) for q in web_queries]
             results_per_query: List[List[SearchResult]] = await asyncio.gather(*tasks, return_exceptions=False)
             all_results = [r for sub in results_per_query for r in sub]
 
-            # extract full content, bounded concurrency
             all_results = await self.extractor.enhance_results(all_results)
             combined = dedup_results(state.search_results + all_results)
             filtered = self.scorer.filter_results(combined, min_score=config.min_credibility_score)
-            
-            # --- BUG 20 FIX: Prioritize and cap documents by credibility score ---
+
             scored = sorted(filtered, key=lambda r: self.scorer.score_url(r.url)["score"], reverse=True)
             filtered = scored[:config.max_docs_for_extraction]
-            # --------------------------------------------------------------------
 
             credibility_scores = [self.scorer.score_url(r.url) for r in filtered]
 
             logger.info(f"Retrieved {len(all_results)} -> {len(filtered)} after dedup+credibility (capped & accumulated)")
 
             return {
-                "search_results": filtered,          # full deduped accumulated set, capped for Groq free-tier
+                "search_results": filtered,
                 "credibility_scores": credibility_scores,
                 "current_stage": "extracting_claims",
                 "iterations": state.iterations + 1,

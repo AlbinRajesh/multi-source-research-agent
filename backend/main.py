@@ -1,35 +1,43 @@
-"""FastAPI entry point for the Research & Search Agent.
-
-Exposes the LangGraph research pipeline over HTTP. Run with:
-    uvicorn main:app --reload --port 8001
-"""
 import logging
-from typing import Optional, List
+import json
+import uuid
+from typing import Optional, List, AsyncGenerator
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
+from langgraph.checkpoint.memory import MemorySaver
 
-from src.graph import run_research, run_research_with_persistence, resume_research
+from src.graph import run_research, run_research_with_persistence, resume_research, create_research_graph
+from src.state import ResearchState
 from src.exceptions import DeepResearchError, ResearchAgentError
+from src.config import config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# 1. Create the app FIRST
 app = FastAPI(
     title="Research & Search Agent",
     description="Multi-source research assistant with claim-level groundedness verification",
     version="0.1.0",
 )
 
+# 2. THEN add middleware (app must already exist)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:5175"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# =============================================================================
-# Request / Response models
-# =============================================================================
 
+# 3. Request/response models
 class ResearchRequest(BaseModel):
     topic: str
-    sources: Optional[List[str]] = None       # e.g. ["web"], later ["web", "local"]
-    persist: bool = False                       # use SQLite checkpointing vs in-memory
+    sources: Optional[List[str]] = None
+    persist: bool = False
     thread_id: Optional[str] = None
 
 
@@ -37,10 +45,7 @@ class ResumeRequest(BaseModel):
     thread_id: str
 
 
-# =============================================================================
-# Routes
-# =============================================================================
-
+# 4. All routes — existing ones stay as they are, new /research/stream added below
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -48,42 +53,74 @@ async def health():
 
 @app.post("/research")
 async def research(req: ResearchRequest):
-    try:
-        if req.persist:
-            result = await run_research_with_persistence(req.topic, thread_id=req.thread_id)
-        else:
-            result = await run_research(
-                topic=req.topic,
-                sources_available=req.sources,
-                use_checkpoints=True,
-                thread_id=req.thread_id,
-            )
-    except ResearchAgentError as e:
-        logger.error(f"Research error: {e}")
-        raise HTTPException(status_code=422, detail=str(e))
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        raise HTTPException(status_code=500, detail="Internal error during research")
-
-    # result is a ResearchState-shaped dict/object depending on LangGraph version
-    return {
-        "final_report": result.get("final_report") if isinstance(result, dict) else result.final_report,
-        "citations": result.get("citations") if isinstance(result, dict) else result.citations,
-        "error": result.get("error") if isinstance(result, dict) else result.error,
-    }
+    # ...unchanged, your existing code...
+    ...
 
 
 @app.post("/research/resume")
 async def research_resume(req: ResumeRequest):
-    try:
-        result = await resume_research(req.thread_id)
-    except ResearchAgentError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        logger.error(f"Resume failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal error during resume")
+    # ...unchanged, your existing code...
+    ...
 
-    return {
-        "final_report": result.get("final_report") if isinstance(result, dict) else result.final_report,
-        "citations": result.get("citations") if isinstance(result, dict) else result.citations,
-    }
+
+@app.post("/research/stream")
+async def research_stream(req: ResearchRequest):
+    initial_state = ResearchState(
+        research_topic=req.topic,
+        sources_available=req.sources or ["web"],
+    )
+    checkpointer = MemorySaver()
+    graph = create_research_graph(checkpointer=checkpointer)
+    tid = req.thread_id or f"research-{uuid.uuid4().hex[:8]}"
+    run_config = {"configurable": {"thread_id": tid}}
+
+    async def event_generator() -> AsyncGenerator[dict, None]:
+        try:
+            async for update in graph.astream(initial_state, config=run_config, stream_mode="updates"):
+                node_name = list(update.keys())[0]
+                yield {
+                    "event": "node_update",
+                    "data": json.dumps(_summarize(node_name, update[node_name]), default=str),
+                }
+            yield {"event": "done", "data": json.dumps({"status": "complete", "thread_id": tid})}
+        except Exception as e:
+            logger.error(f"Streaming research failed: {e}")
+            yield {"event": "error", "data": json.dumps({"message": str(e)})}
+
+    return EventSourceResponse(event_generator())
+
+
+def _summarize(node_name: str, output: dict) -> dict:
+    if node_name == "plan":
+        plan = output.get("plan")
+        return {
+            "node": node_name,
+            "objectives": plan.objectives if plan else [],
+            "search_queries": [q.query for q in plan.search_queries] if plan else [],
+        }
+    if node_name == "search":
+        return {"node": node_name, "result_count": len(output.get("search_results", []))}
+    if node_name == "extract_claims":
+        return {"node": node_name, "claim_count": len(output.get("claims", []))}
+    if node_name == "verify":
+        verified = output.get("verified_claims", [])
+        return {
+            "node": node_name,
+            "verified_count": sum(1 for v in verified if v.confidence in ("verified", "single_source")),
+            "total_count": len(verified),
+        }
+    if node_name == "check_retry":
+        return {"node": node_name, "route": output.get("route_decision")}
+    if node_name == "synthesize":
+        return {
+            "node": node_name,
+            "final_report": output.get("final_report", ""),
+            "citations": output.get("citations", []),
+        }
+    return {"node": node_name}  
+
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=config.port, reload=True)

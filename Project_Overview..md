@@ -458,3 +458,117 @@ The Fix: We added a deduplication step by URL so every unique source gets one si
 
 5. Added Stage-Level Timings
 The Fix: We added a built-in timer (timed_node) that logs exactly how many seconds each phase (search, extract_claims, verify, etc.) takes, which is how we diagnosed that extract_claims was causing the bottleneck in the first place.
+---------------------------------------------------------------------------------------------------
+
+
+Per-node timing (this run)
+Stage	First pass	Retry pass	Total
+plan	1.76s	—	1.76s
+search	35.46s	12.18s	47.64s
+extract_claims	47.39s	0.00s	47.39s
+verify	31.48s	84.06s	115.54s
+synthesize	17.50s	—	17.50s
+Total			~230s (3.8 min)
+
+-------------------------------------------
+some improvements
+-------------------------------------------
+Per-node timing (this run)
+Stage          First pass   Retry pass   Total
+plan           1.58s        —            1.58s
+search         23.95s       —            23.95s
+extract_claims 59.88s       —            59.88s
+verify         36.86s       —            36.86s
+synthesize     13.45s       —            13.45s
+Total                                    ~135.7s (2.3 min)
+-------------------------------------------
+Stage          First pass   Retry pass   Total
+plan           1.21s        —            1.21s
+search         5.49s        5.67s        11.16s
+extract_claims 15.72s       14.63s       30.35s
+verify         2.19s        5.39s        7.58s
+refine_search  0.00s        —            0.00s
+synthesize     —            —            21.40s
+Total                                    ~71.7s (1.2 min)
+
+
+
+Plan: $1.58\text{s}$Search: $23.95\text{s}$Extract Claims: $59.88\text{s}$Verify: $36.86\text{s}$Synthesize: $13.45\text{s}$
+
+verify is now your dominant bottleneck at 115s — not extract_claims. The Ollama move worked exactly as intended for extraction speed, but it exposed a bigger problem underneath.
+
+The real bug: over-extraction, not rate limits
+
+Look at the claim counts: qwen2.5:3b extracted 75 claims from 8 docs (~9 claims/doc). Your original Groq extraction on the same kind of query extracted 9-10 claims total from 8 docs (~1.1/doc). That's a ~7x volume increase.
+
+This cascades badly:
+
+verify now has to check 75 claims instead of ~10 → 7x more Groq calls/tokens → this is why verify is now eating 31s then 84s of retries, even though verify itself wasn't touched
+Only 39/75 (52%) passed verification on the first pass → triggered a retry
+The retry reprocessed all 75 claims again (not just the failed ones), pushing verify to 84s under heavy 429 backoff
+Net result: you moved the bottleneck, you didn't remove it — total latency (230s) is actually worse than your original Elon Musk run (~145s from the very first log you shared)
+
+Root cause: qwen2.5:3b-instruct without tight extraction constraints tends to over-decompose text into many small, sometimes redundant or low-information claims. This isn't a model failure — it's a missing constraint in your prompt/pipeline.
+
+Fix — cap and tighten extraction, don't just swap providers:
+
+Add an explicit instruction to CLAIM_EXTRACTION_SYSTEM_PROMPT: "Extract at most 4-6 of the most significant, non-redundant factual claims. Do not extract minor or trivial details."
+Add a hard post-filter in claim_extractor.py after parsing: cap claims per doc, e.g. parsed_claims[:6].
+This alone should cut your claim volume ~5x, which cuts verify's token load proportionally — likely your single biggest latency win right now, bigger than the Ollama move itself.
+Second bug, more serious: your retry loop does nothing useful
+
+Look closely — on retry, search reran the exact same 5 malformed queries ("Elone Muk" biography, etc. — the typo was never corrected), got the same sources, and extract_claims on retry shows 0.00s — meaning zero new documents were processed, because processed_result_indices already covered everything from pass 1.
+
+So the retry:
+
+Spent 12s re-querying Tavily for identical results
+Extracted zero new claims
+Then re-verified all 75 old claims again, burning 84s and a fresh wave of 429s
+For a net gain of 14 percentage points (39→53 out of 75 grounded) — almost entirely from Groq's non-determinism on identical inputs, not from any new evidence
+
+This matches something already flagged in your project's earlier static-analysis phase: the retry loop routes back to search instead of plan, so it never generates refined queries — it just reruns the same failed strategy and hopes for a different result. This is your actual highest-value bug fix, more impactful than either Ollama or extraction limits, because right now every retry is closer to pure waste than genuine research.
+
+Fix: route check_retry's low-confidence branch back to plan, not search, so a new pass can generate different/refined sub-queries (and ideally get a chance to notice and correct "Elone Muk" → "Elon Musk").
+
+Your adaptive sub-query idea — good instinct, here's how to make it real
+
+Yes, "who is elon musk" doesn't need 5 sub-queries fanning out into biography/career/comparison/controversies/2026-news — that's appropriate for a broad research report, wasteful for a simple identity lookup.
+
+Implementation approach — classify query complexity in the planner, don't hardcode it:
+
+python
+# rough sketch inside planner.py
+def estimate_complexity(topic: str) -> str:
+    simple_patterns = [r"^who is\b", r"^what is\b", r"^when (was|did)\b", r"^where is\b"]
+    if any(re.match(p, topic.strip().lower()) for p in simple_patterns) and len(topic.split()) <= 6:
+        return "simple"
+    return "complex"
+
+Then:
+
+simple → 1-2 sub-queries, max_search_results_per_query reduced (e.g. 3 instead of 5), skip the "controversies/comparison/future prospects" objective generation entirely
+complex → your current 5-objective flow
+
+Better than a regex heuristic long-term: have the LLM planner call itself output a complexity: "simple" | "moderate" | "complex" field alongside its objectives (one extra field in the same call, zero extra latency), and use that to gate downstream max_search_queries. This scales better than pattern-matching as you add more query types, and it's still one Groq call, not an extra one.
+
+Additional latency/token reduction levers, in priority order
+Cap claims per doc (above) — highest ROI, fixes verify's blowup directly
+Fix retry → route to plan, not search — stops wasted re-verification cycles
+Skip re-verifying already-grounded claims on retry — only re-run verify on the claims that failed, not the full accumulated set. Right now you're paying full verify cost twice for claims that already passed.
+Batch verify calls — check if verifier.py already batches multiple claims per source into one call (log shows "Verification failed for source 4", suggesting per-source batching already exists — good). If it's actually per-claim, batching by source is a large win.
+Adaptive result count — max_search_results_per_query: 5 is fixed regardless of complexity; tie this to the complexity classifier too.
+TokenRateLimiter (your original planned next step) — still valuable for verify/synthesize, which remain on Groq and still hit 429s in this log. This smooths request pacing rather than bursting and immediately eating your 8000 TPM budget.
+Edge cases worth handling for an enterprise-grade pipeline
+Malformed/misspelled entity names never get corrected — "Elone Muk" persisted through the entire retry cycle. Add an entity-normalization or spell-check step in plan, or have the planner LLM itself flag and correct obvious typos before generating sub-queries.
+Retry loop with zero new evidence — should detect "no new documents processed" and either stop retrying (don't waste a cycle) or force query diversification instead of resubmitting identical queries.
+Local model unavailable — if Ollama isn't running when claim_extractor calls it, you need a defined fallback (retry on Groq? fail the doc gracefully?) rather than an unhandled connection error taking down the whole run.
+VRAM contention — if your embedding model, reranker, and qwen2.5:3b are ever needed concurrently (e.g. if local_rag_enabled Phase 2 comes online), 4GB will be tight. Worth load-testing that combination before Phase 2.
+Claim explosion from local model on longer/denser documents — the cap above helps, but also consider truncating input more aggressively for extraction (text[:3000] already exists — maybe bring it down further, extraction doesn't need full-document context, just the most information-dense paragraphs).
+Over-triggering retries — with min_claims_verified_ratio: 0.6, a 52% pass rate reasonably triggers retry, but if extraction is capped/tightened per above, expect higher first-pass verification rates, so retries should become rarer and cheaper when they do happen.
+
+My suggested next step, in order: (1) cap claims per doc, (2) fix retry routing to plan, (3) add the complexity-based adaptive sub-query count. Those three together should meaningfully cut both latency and token spend without sacrificing report quality — want me to write the actual code changes for #1 and #2 first, since those are the two clearest bugs?
+
+
+
+
+Claude is AI and can make mistakes. Please double-check responses.

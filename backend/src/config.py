@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     llamacpp_base_url: str = "http://localhost:8080"
     groq_api_key: Optional[str] = None
     groq_base_url: str = "https://api.groq.com/openai/v1"
+    claim_extraction_model: str = "qwen2.5:3b-instruct"
 
     # Search
     search_provider: str = "tavily"         # tavily | searxng
@@ -35,6 +36,9 @@ class Settings(BaseSettings):
 
     # Local RAG (Phase 2)
     local_rag_enabled: bool = False
+
+    #Port
+    port: int = 8001
 
     class Config:
         env_file = ".env"

@@ -1,1 +1,35 @@
-@import "tailwindcss"
+@import "tailwindcss";
+
+@theme {
+  --color-background: #0E0F11;
+  --color-surface: #17181B;
+  --color-surface-container: #1C1D20;
+  --color-surface-container-high: #222327;
+  --color-on-surface: #EDEBE6;
+  --color-on-surface-variant: #8B8983;
+  --color-outline: #2A2C30;
+  --color-primary: #5B8DD9;
+  --color-on-primary: #0A1420;
+
+  --font-headline: "Playfair Display", serif;
+  --font-body: "Hanken Grotesk", sans-serif;
+}
+/* add to index.css, below your @theme block */
+.pipeline-scroll::-webkit-scrollbar {
+  display: none;
+}
+.pipeline-scroll {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+}
+
+body {
+  @apply bg-background text-on-surface font-body;
+}

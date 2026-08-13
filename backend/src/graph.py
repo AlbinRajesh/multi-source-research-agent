@@ -4,11 +4,12 @@ Adapted from a reference deep-research-agent pattern (StateGraph +
 SqliteSaver checkpointing + conditional routing), extended with:
   - claim extraction + verification stages (the accuracy differentiator)
   - a conditional retry loop: if too many claims are unconfirmed, loop
-    back to search with a refined plan instead of synthesizing on weak
-    evidence
+    back to planning with feedback instead of blindly re-searching,
+    and only weak claims are re-verified on subsequent passes
 """
 import uuid
 import logging
+from metrics.token_counter import TokenTracker
 from pathlib import Path
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
@@ -20,7 +21,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from src.state import ResearchState
+from src.state import ResearchState, SearchQuery
 from src.agents.planner import PlannerAgent
 from src.agents.retriever import RetrieverAgent
 from src.agents.claim_extractor import ClaimExtractionAgent
@@ -30,6 +31,20 @@ from src.exceptions import ResearchAgentError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Complexity tiers — used both at planning time (planner.py) and here, to
+# cap retry query volume. TODO: this should be a single shared source of
+# truth (e.g. src/utils/credibility.py or src/constants.py) instead of
+# defined separately in planner.py and graph.py — consolidate once
+# credibility.py / planner.py's current version is confirmed.
+# =============================================================================
+COMPLEXITY_LIMITS = {
+    "simple":   {"max_queries": 2, "max_results_per_query": 3},
+    "moderate": {"max_queries": 3, "max_results_per_query": 5},
+    "complex":  {"max_queries": 5, "max_results_per_query": 5},
+}
 
 
 # =============================================================================
@@ -80,8 +95,9 @@ def create_research_graph(checkpointer=None):
     workflow.add_node("plan", timed_node("plan")(planner.plan))
     workflow.add_node("search", timed_node("search")(retriever.search))
     workflow.add_node("extract_claims", timed_node("extract_claims")(claim_extractor.extract))
-    workflow.add_node("verify", timed_node("verify")(verifier.verify))
+    workflow.add_node("verify", timed_node("verify")(verify_only_weak(verifier.verify)))
     workflow.add_node("check_retry", check_retry)
+    workflow.add_node("refine_search", timed_node("refine_search")(refine_search_queries))
     workflow.add_node("synthesize", timed_node("synthesize")(synthesizer.synthesize))
 
     workflow.add_edge(START, "plan")
@@ -107,10 +123,16 @@ def create_research_graph(checkpointer=None):
     workflow.add_conditional_edges("plan", after_plan, {"search": "search", END: END})
     workflow.add_conditional_edges("search", after_search, {"extract_claims": "extract_claims", END: END})
     workflow.add_conditional_edges("extract_claims", after_extract_claims, {"verify": "verify", "synthesize": "synthesize"})
-    
+
     workflow.add_edge("verify", "check_retry")
     workflow.add_conditional_edges(
-        "check_retry", lambda s: s.route_decision, {"search": "search", "synthesize": "synthesize"}
+        "check_retry", lambda s: s.route_decision,
+        {"refine_search": "refine_search", "synthesize": "synthesize"}
+    )
+    workflow.add_conditional_edges(
+        "refine_search",
+        lambda s: s.route_decision,
+        {"search": "search", "synthesize": "synthesize"}
     )
     workflow.add_edge("synthesize", END)
 
@@ -118,26 +140,123 @@ def create_research_graph(checkpointer=None):
 
 
 # =============================================================================
+# Targeted re-verification wrapper
+# =============================================================================
+
+def verify_only_weak(verify_fn):
+    """
+    On the first pass, verify everything. On retries, only the newly
+    extracted claims need to go through verify.verify() — claims already
+    confirmed on a prior pass are banked in state.confirmed_claims and
+    skipped, instead of being re-sent to the verifier every loop.
+    """
+    @wraps(verify_fn)
+    async def wrapper(state: ResearchState):
+        result = await verify_fn(state)
+        if not isinstance(result, dict) or "error" in result:
+            return result
+
+        newly_verified = result.get("verified_claims", [])
+        merged = list(state.confirmed_claims) + list(newly_verified)
+        result["verified_claims"] = merged
+        return result
+    return wrapper
+
+
+# =============================================================================
 # Retry Logic Node
 # =============================================================================
 
 def check_retry(state: ResearchState) -> dict:
-    total = len(state.verified_claims) or 1
-    weak = sum(1 for v in state.verified_claims if v.confidence in ("unconfirmed", "conflicting"))
-    weak_ratio = weak / total
-    threshold = 1 - config.min_claims_verified_ratio
-
     if state.error:
         return {"route_decision": "synthesize"}
+
+    total = len(state.verified_claims) or 1
+    weak_claims = [
+        v for v in state.verified_claims
+        if v.confidence in ("unconfirmed", "conflicting")
+    ]
+    weak_ratio = len(weak_claims) / total
+    threshold = 1 - config.min_claims_verified_ratio
+
     if weak_ratio > threshold and state.retry_count < state.max_retries:
-        logger.info(f"{weak_ratio:.0%} weak, retry {state.retry_count + 1}/{state.max_retries}")
-        return {"retry_count": state.retry_count + 1, "route_decision": "search"}
+        confirmed = [
+            v for v in state.verified_claims
+            if v.confidence not in ("unconfirmed", "conflicting")
+        ]
+
+        # Capture claim TEXT now, while state.claims is still populated —
+        # refine_search_queries runs after claims is reset to [] below.
+        claim_by_id = {c.id: c for c in state.claims}
+        weak_claim_texts = [
+            claim_by_id[v.claim_id].text
+            for v in weak_claims
+            if v.claim_id in claim_by_id
+        ]
+
+        logger.info(
+            f"{weak_ratio:.0%} weak ({len(weak_claims)}/{total}), "
+            f"retry {state.retry_count + 1}/{state.max_retries} — "
+            f"banking {len(confirmed)} confirmed claims, "
+            f"targeting {len(weak_claim_texts)} weak claims only"
+        )
+        return {
+            "retry_count": state.retry_count + 1,
+            "route_decision": "refine_search",
+            "confirmed_claims": confirmed,
+            "verified_claims": confirmed,
+            "claims": [],
+            "weak_claims_to_resolve": weak_claim_texts,
+        }
+
     return {"route_decision": "synthesize"}
+
+
+async def refine_search_queries(state: ResearchState) -> dict:
+    weak_texts = state.weak_claims_to_resolve or []
+
+    seen = set()
+    deduped = []
+    for q in weak_texts:
+        q = q[:200]
+        if q not in seen:
+            seen.add(q)
+            deduped.append(q)
+
+    if not deduped:
+        logger.warning("No resolvable queries from weak claims, skipping refine_search")
+        return {"route_decision": "synthesize"}
+
+    # Cap retry query count to the SAME tier used in the original plan —
+    # retry volume should scale with topic complexity, not with how many
+    # claims happened to fail verification.
+    complexity = getattr(state.plan, "complexity", "moderate")
+    tier = COMPLEXITY_LIMITS.get(complexity, COMPLEXITY_LIMITS["moderate"])
+    query_cap = tier["max_queries"]
+
+    if len(deduped) > query_cap:
+        logger.info(
+            f"[retry_cap] {len(deduped)} weak claims -> capping retry queries to "
+            f"{query_cap} (complexity={complexity})"
+        )
+        deduped = deduped[:query_cap]
+
+    logger.info(f"Refined retry queries ({len(deduped)}): {deduped}")
+
+    updated_plan = state.plan.model_copy(update={
+        "search_queries": [
+            SearchQuery(query=q, purpose="Retry: resolve unconfirmed claim", source_hint="web")
+            for q in deduped
+        ]
+    })
+    return {"plan": updated_plan, "route_decision": "search"}
 
 
 # =============================================================================
 # Execution entry points
 # =============================================================================
+
+from src.utils.cache import get_cached_result, set_cached_result
 
 async def run_research(
     topic: str,
@@ -150,6 +269,7 @@ async def run_research(
     initial_state = ResearchState(
         research_topic=topic,
         sources_available=sources_available or ["web"],
+        token_tracker=TokenTracker(),
     )
 
     run_config: Dict[str, Any] = {}
@@ -164,7 +284,17 @@ async def run_research(
 
     try:
         final_state = await graph.ainvoke(initial_state, config=run_config or None)
-        
+
+        tracker = final_state.get("token_tracker") if isinstance(final_state, dict) else None
+        if tracker:
+            token_summary = tracker.summary()
+            logger.info(
+                f"[tokens] run total: {token_summary['total_tokens']} "
+                f"({token_summary['total_input_tokens']} in / {token_summary['total_output_tokens']} out)"
+            )
+            if isinstance(final_state, dict):
+                final_state["token_summary"] = token_summary
+
         timings = final_state.get("stage_timings", {}) if isinstance(final_state, dict) else {}
         if timings:
             total = sum(timings.values())
@@ -182,7 +312,11 @@ async def run_research(
 
 async def run_research_with_persistence(topic: str, thread_id: Optional[str] = None) -> Dict[str, Any]:
     """SQLite-persisted version — survives process restarts."""
-    initial_state = ResearchState(research_topic=topic)
+    initial_state = ResearchState(
+        research_topic=topic,
+        sources_available=["web"],
+        token_tracker=TokenTracker(),
+    )
     tid = thread_id or f"research-{uuid.uuid4().hex[:8]}"
     run_config = {"configurable": {"thread_id": tid}}
 

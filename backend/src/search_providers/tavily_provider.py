@@ -7,6 +7,7 @@ from tavily import TavilyClient
 from src.search_providers.base import SearchProvider, ProviderUnavailableError
 from src.state import SearchResult
 from src.exceptions import SearchError
+import asyncio
 from src.config import config
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ class TavilySearchProvider(SearchProvider):
     async def search(self, query: str, max_results: Optional[int] = None) -> List[SearchResult]:
         limit = max_results or 5
         try:
-            response = self.client.search(query=query, max_results=limit, search_depth="basic")
+            response = await asyncio.to_thread(self.client.search, query=query, max_results=limit, search_depth="basic")
             results = []
             for item in response.get("results", []):
                 results.append(SearchResult(

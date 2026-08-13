@@ -1,4 +1,5 @@
 """Planner Agent — decomposes query into sub-queries + source routing."""
+import re
 import asyncio
 import logging
 from typing import Dict, Any, Optional
@@ -11,14 +12,38 @@ from src.prompts.planner_prompt import PLANNER_SYSTEM_PROMPT, PLANNER_USER_TEMPL
 from src.config import config
 from src.exceptions import PlanningError
 from src.utils.llm_factory import get_llm
+from metrics.token_counter import track_llm_call
 
 logger = logging.getLogger(__name__)
+
+COMPLEXITY_LIMITS = {
+    "simple":   {"max_queries": 2, "max_results_per_query": 3},
+    "moderate": {"max_queries": 3, "max_results_per_query": 5},
+    "complex":  {"max_queries": 5, "max_results_per_query": 5},
+}
+
+SIMPLE_TOPIC_PATTERNS = [
+    r"^(who|what|when|where)\s+is\b",
+    r"^define\b",
+    r"^what does .* mean\??$",
+]
+
+def _deterministic_tier_floor(topic: str) -> Optional[str]:
+    """Returns 'simple' if the topic clearly matches a basic lookup pattern and is short, else None."""
+    normalized = topic.strip().lower()
+    word_count = len(normalized.split())
+    if word_count <= 8:
+        for pattern in SIMPLE_TOPIC_PATTERNS:
+            if re.match(pattern, normalized):
+                return "simple"
+    return None
 
 
 class PlannerAgent:
     def __init__(self, llm=None, max_retries: int = 3):
         self.llm = llm or get_llm(temperature=0.5)
         self.max_retries = max_retries
+        self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")
 
     async def plan(self, state: ResearchState) -> Dict[str, Any]:
         local_available = "local" in state.sources_available
@@ -38,15 +63,39 @@ class PlannerAgent:
         for attempt in range(self.max_retries):
             try:
                 chain = prompt | self.llm | JsonOutputParser()
-                result = await chain.ainvoke({
-                    "topic": state.research_topic,
-                    "local_docs_available": local_available,
-                })
+                result = await track_llm_call(
+                    chain,
+                    {"topic": state.research_topic, "local_docs_available": local_available},
+                    tracker=state.token_tracker,
+                    node="plan",
+                    model=self.model_name,
+                )
 
                 if not all(k in result for k in ("topic", "objectives", "search_queries", "report_outline")):
                     raise PlanningError("Invalid plan structure")
                 if not result["search_queries"]:
                     raise PlanningError("No search queries generated")
+
+                llm_complexity = result.get("complexity", "moderate")
+                if llm_complexity not in COMPLEXITY_LIMITS:
+                    logger.warning(f"Planner returned unknown complexity={llm_complexity!r}, defaulting to 'moderate'")
+                    llm_complexity = "moderate"
+
+                deterministic_floor = _deterministic_tier_floor(state.research_topic)
+                complexity = deterministic_floor or llm_complexity
+                if deterministic_floor and deterministic_floor != llm_complexity:
+                    logger.info(
+                        f"[complexity] LLM rated '{llm_complexity}' but topic matches simple-lookup "
+                        f"pattern — overriding to 'simple'"
+                    )
+
+                tier = COMPLEXITY_LIMITS[complexity]
+                query_cap = min(tier["max_queries"], config.max_search_queries)
+
+                logger.info(
+                    f"[complexity] topic={state.research_topic!r} tier={complexity} "
+                    f"query_cap={query_cap} (LLM proposed {len(result['search_queries'])})"
+                )
 
                 plan = ResearchPlan(
                     topic=result["topic"],
@@ -57,9 +106,10 @@ class PlannerAgent:
                             purpose=sq["purpose"],
                             source_hint=sq.get("source_hint", "web"),
                         )
-                        for sq in result["search_queries"][: config.max_search_queries]
+                        for sq in result["search_queries"][:query_cap]
                     ],
                     report_outline=result["report_outline"][: config.max_report_sections],
+                    complexity=complexity,
                 )
 
                 return {"plan": plan, "current_stage": "searching", "iterations": state.iterations + 1}

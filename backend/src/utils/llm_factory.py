@@ -23,6 +23,7 @@ def get_llm(
     model_override: Optional[str] = None,
     model_override_key: Optional[str] = None,
     provider_override: Optional[str] = None,
+    max_tokens: Optional[int] = None,  # NEW
 ) -> BaseChatModel:
     """Get an LLM instance based on config.
 
@@ -33,6 +34,7 @@ def get_llm(
             from (e.g. "fast_model_name") — lets callers say "use the cheap
             model" without hardcoding a model name in the agent itself
         provider_override: explicit provider, overrides config.model_provider
+        max_tokens: maximum tokens to generate in the completion
     """
     if model_override:
         model_name = model_override
@@ -53,6 +55,7 @@ def get_llm(
                 base_url=config.ollama_base_url,
                 temperature=temperature,
                 num_ctx=8192,
+                num_predict=max_tokens if max_tokens else -1,  # -1 = Ollama default (unbounded)
             )
 
         elif provider == "openai":
@@ -64,6 +67,7 @@ def get_llm(
                 base_url=f"{config.openai_base_url}/v1",
                 api_key=config.openai_api_key,
                 temperature=temperature,
+                max_tokens=max_tokens,
             )
 
         elif provider == "groq":
@@ -75,6 +79,7 @@ def get_llm(
                 base_url=config.groq_base_url,
                 api_key=config.groq_api_key,
                 temperature=temperature,
+                max_tokens=max_tokens,
             )
 
         elif provider == "llamacpp":
@@ -84,6 +89,7 @@ def get_llm(
                 base_url=f"{config.llamacpp_base_url}/v1",
                 api_key="not-needed",
                 temperature=temperature,
+                max_tokens=max_tokens,
             )
 
         elif provider == "gemini":
@@ -94,6 +100,7 @@ def get_llm(
                 model=model_name,
                 google_api_key=config.google_api_key,
                 temperature=temperature,
+                max_output_tokens=max_tokens,
             )
 
         else:
