@@ -3,8 +3,9 @@
 Adapted from a reference deep-research-agent pattern (StateGraph +
 SqliteSaver checkpointing + conditional routing), extended with:
   - claim extraction + verification stages (the accuracy differentiator)
+  - relevance filtering to strip off-topic extracted claims
   - a conditional retry loop: if too many claims are unconfirmed, loop
-    back to planning with feedback instead of blindly re-searching,
+    back to refining search queries instead of blindly re-searching,
     and only weak claims are re-verified on subsequent passes
 """
 import uuid
@@ -21,24 +22,21 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from src.state import ResearchState, SearchQuery
+from src.state import ResearchState, SearchQuery    
 from src.agents.planner import PlannerAgent
 from src.agents.retriever import RetrieverAgent
 from src.agents.claim_extractor import ClaimExtractionAgent
 from src.agents.verifier import VerificationAgent
 from src.agents.synthesizer import SynthesizerAgent
 from src.exceptions import ResearchAgentError
+from src.utils.relevance import filter_by_relevance
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Complexity tiers — used both at planning time (planner.py) and here, to
-# cap retry query volume. TODO: this should be a single shared source of
-# truth (e.g. src/utils/credibility.py or src/constants.py) instead of
-# defined separately in planner.py and graph.py — consolidate once
-# credibility.py / planner.py's current version is confirmed.
+# Complexity tiers — used to cap retry query volume.
 # =============================================================================
 COMPLEXITY_LIMITS = {
     "simple":   {"max_queries": 2, "max_results_per_query": 3},
@@ -95,6 +93,7 @@ def create_research_graph(checkpointer=None):
     workflow.add_node("plan", timed_node("plan")(planner.plan))
     workflow.add_node("search", timed_node("search")(retriever.search))
     workflow.add_node("extract_claims", timed_node("extract_claims")(claim_extractor.extract))
+    workflow.add_node("relevance_filter", timed_node("relevance_filter")(relevance_filter))
     workflow.add_node("verify", timed_node("verify")(verify_only_weak(verifier.verify)))
     workflow.add_node("check_retry", check_retry)
     workflow.add_node("refine_search", timed_node("refine_search")(refine_search_queries))
@@ -114,15 +113,10 @@ def create_research_graph(checkpointer=None):
             return END
         return "extract_claims"
 
-    def after_extract_claims(state: ResearchState) -> str:
-        if state.error or not state.claims:
-            logger.warning("No claims extracted — nothing to verify, going straight to synthesize")
-            return "synthesize"
-        return "verify"
-
     workflow.add_conditional_edges("plan", after_plan, {"search": "search", END: END})
     workflow.add_conditional_edges("search", after_search, {"extract_claims": "extract_claims", END: END})
-    workflow.add_conditional_edges("extract_claims", after_extract_claims, {"verify": "verify", "synthesize": "synthesize"})
+    workflow.add_conditional_edges("extract_claims", after_extract_claims, {"relevance_filter": "relevance_filter", "synthesize": "synthesize"})
+    workflow.add_conditional_edges("relevance_filter", after_relevance_filter, {"verify": "verify", "synthesize": "synthesize"})
 
     workflow.add_edge("verify", "check_retry")
     workflow.add_conditional_edges(
@@ -137,6 +131,40 @@ def create_research_graph(checkpointer=None):
     workflow.add_edge("synthesize", END)
 
     return workflow.compile(checkpointer=checkpointer)
+
+
+# =============================================================================
+# Relevance Filter Node & Routing Edges
+# =============================================================================
+
+async def relevance_filter(state: ResearchState) -> dict:
+    if not state.claims:
+        return {}
+
+    kept, scores = filter_by_relevance(state.claims, state.research_topic, min_score=config.min_relevance_score)
+
+    if scores:
+        logger.info(
+            f"[relevance_dist] min={min(scores):.2f} max={max(scores):.2f} "
+            f"avg={sum(scores)/len(scores):.2f} n={len(scores)}"
+        )
+    logger.info(f"Relevance filter: {len(state.claims)} -> {len(kept)} claims")
+
+    return {"claims": kept}
+
+
+def after_extract_claims(state: ResearchState) -> str:
+    if state.error or not state.claims:
+        logger.warning("No claims extracted — nothing to verify, going straight to synthesize")
+        return "synthesize"
+    return "relevance_filter"
+
+
+def after_relevance_filter(state: ResearchState) -> str:
+    if not state.claims:
+        logger.warning("No claims survived relevance filter — going straight to synthesize")
+        return "synthesize"
+    return "verify"
 
 
 # =============================================================================
@@ -185,8 +213,6 @@ def check_retry(state: ResearchState) -> dict:
             if v.confidence not in ("unconfirmed", "conflicting")
         ]
 
-        # Capture claim TEXT now, while state.claims is still populated —
-        # refine_search_queries runs after claims is reset to [] below.
         claim_by_id = {c.id: c for c in state.claims}
         weak_claim_texts = [
             claim_by_id[v.claim_id].text
@@ -227,9 +253,6 @@ async def refine_search_queries(state: ResearchState) -> dict:
         logger.warning("No resolvable queries from weak claims, skipping refine_search")
         return {"route_decision": "synthesize"}
 
-    # Cap retry query count to the SAME tier used in the original plan —
-    # retry volume should scale with topic complexity, not with how many
-    # claims happened to fail verification.
     complexity = getattr(state.plan, "complexity", "moderate")
     tier = COMPLEXITY_LIMITS.get(complexity, COMPLEXITY_LIMITS["moderate"])
     query_cap = tier["max_queries"]
@@ -255,8 +278,6 @@ async def refine_search_queries(state: ResearchState) -> dict:
 # =============================================================================
 # Execution entry points
 # =============================================================================
-
-from src.utils.cache import get_cached_result, set_cached_result
 
 async def run_research(
     topic: str,

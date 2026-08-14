@@ -6,6 +6,7 @@ Claim Extraction + Verification stages for claim-level groundedness checking
 """
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Literal, Any
+from src.utils.relevance import filter_by_relevance
 
 
 # =============================================================================
