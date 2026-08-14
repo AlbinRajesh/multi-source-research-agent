@@ -20,8 +20,13 @@ export function useResearchStream() {
         onNode: (data) => {
           setNodeLog((log) => [...log, data]);
           if (data.node === "synthesize") {
-            setReport(data.final_report);
-            setCitations(data.citations ?? []);
+            if (data.error) {
+              setError(data.error);
+              setStatus("error");
+            } else {
+              setReport(data.final_report);
+              setCitations(data.citations ?? []);
+            }
           }
         },
         onDone: () => setStatus("done"),

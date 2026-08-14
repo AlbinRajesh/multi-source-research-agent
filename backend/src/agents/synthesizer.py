@@ -9,16 +9,13 @@ from src.utils.llm_factory import get_llm
 from src.processing.citations import format_citations
 from src.prompts.synthesis_prompt import SYNTHESIS_SYSTEM_PROMPT, SYNTHESIS_USER_TEMPLATE
 from metrics.token_counter import track_llm_call
-
+from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
 class SynthesizerAgent:
     def __init__(self, llm=None):
         self.llm = llm or get_llm(temperature=0.3)
-        # model name for token/cost attribution — adjust attribute if your
-        # provider wrapper exposes it differently (ChatOpenAI uses
-        # .model_name, some wrappers use .model)
         self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")
 
     async def synthesize(self, state: ResearchState) -> Dict[str, Any]:
@@ -56,9 +53,6 @@ class SynthesizerAgent:
                 f'- {claim_by_id[v.claim_id].text}' for v in unconfirmed if v.claim_id in claim_by_id
             ][:10]
 
-            # NOTE: guessing state.plan.objectives as the field name — the
-            # "Research Objectives" section in the new prompt needs this.
-            # If your Plan model names it differently, fix this line.
             objectives = getattr(state.plan, "objectives", None) or []
             objectives_block = "\n".join(f"{i+1}. {obj}" for i, obj in enumerate(objectives)) or "(none specified)"
 
@@ -74,6 +68,7 @@ class SynthesizerAgent:
                     "objectives_block": objectives_block,
                     "claims_block": "\n".join(claims_lines) or "(none)",
                     "unconfirmed_block": "\n".join(unconfirmed_lines) or "(none)",
+                    "current_date": datetime.now(timezone.utc).strftime('%B %d, %Y'),
                 },
                 tracker=getattr(state, "token_tracker", None),
                 node="synthesize",

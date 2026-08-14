@@ -1,13 +1,5 @@
-"""Prompts for the Search/Retriever Agent.
-
-Note: the current `retriever.py` implementation runs a fixed pipeline
-(search all planned queries -> extract content -> credibility pre-filter)
-with no LLM call — it just executes the Planner's query list. These
-prompts are for the optional ADAPTIVE mode: an agentic retriever that can
-decide, per query, whether results are sufficient or another/refined
-search is needed before moving on. Wire this in later if the fixed
-pipeline proves too rigid (e.g. thin results on a sub-query).
-"""
+"""Prompts for the Search/Retriever Agent — optional adaptive mode, not
+currently wired into retriever.py's fixed pipeline."""
 
 RETRIEVER_SYSTEM_PROMPT = """You are a research investigator deciding how to execute a search plan.
 
@@ -17,6 +9,9 @@ RETRIEVER_SYSTEM_PROMPT = """You are a research investigator deciding how to exe
 
 ## Protocol
 - Execute the planned queries below, up to {max_searches} searches total.
+- Each query issued must be a plain natural language phrase — no search
+  operator syntax (site:, filetype:, OR, AND, NOT), these are not
+  universally supported and return empty results on many backends.
 - After each search, judge result quality: are these results specific and
   relevant to the query's stated purpose, or vague/off-topic?
 - If a query's results are weak, you may issue ONE refined follow-up search

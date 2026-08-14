@@ -572,3 +572,37 @@ My suggested next step, in order: (1) cap claims per doc, (2) fix retry routing 
 
 
 Claude is AI and can make mistakes. Please double-check responses.
+----------------------------------------------------------------------------------------------------
+Implementation Plan — Remaining Fixes
+1. Retriever-level rate limiting + retry (Tavily)
+
+Problem: Tavily calls have no retry-on-failure and no shared throttle — a single 429/timeout just drops that sub-query's results silently, and concurrent retriever calls aren't coordinated with each other.
+Fix: Wrap Tavily calls in a small retry-with-backoff (catch failure, wait, retry, cap at ~3 attempts), plus keep them under the semaphore already added in retriever.py.
+Why it helps: Currently a transient Tavily hiccup just silently loses that sub-query's results with no recovery — this makes search resilient instead of fragile, same category of fix as the Groq-side backoff you already benefit from via the SDK.
+
+2. Calibrate min_relevance_score from real data (in progress)
+
+Problem: Two guesses so far — 0.35 (bi-encoder) and 30 (cross-encoder) — both wrong for their respective score scales, one too strict, one impossibly strict.
+Fix: Set to 0.0 based on the actual [relevance_dist] you just captured (real facts scored 0.13–8.41, trivia scored -2.83 to -11.41 — clean gap at 0).
+Why it helps: This is the one open item directly blocking correct pipeline output right now — everything else is hardening, this is a live bug in your last run (17 → 0 claims survived).
+
+3. Safety floor on relevance filter
+
+Problem: If every claim in a batch scores below threshold (as just happened), the filter can zero out an entire run, forcing a wasted retry cycle or an empty synthesis.
+Fix: If the filter would drop below a minimum count (e.g. 3 claims), keep the top-N by score instead of dropping all of them.
+Why it helps: Turns "run produces nothing" into "run produces a weaker but real answer" — a graceful degradation instead of a full failure.
+
+4. Consolidate COMPLEXITY_LIMITS into one location
+
+Problem: Currently only defined in graph.py as a stopgap; planner.py may reference its own copy (never confirmed either way).
+Fix: Move it to config.py as the single source, import in both graph.py and planner.py.
+Why it helps: Prevents the two files silently drifting out of sync if one gets edited later without the other.
+
+Not including, and why — these came from the gpt-researcher review but don't apply to your actual architecture:
+
+Programmatic citation verification — you already have this, more rigorously, via verifier.py's per-claim groundedness + confidence tiers. gpt-researcher was flagging its own gap, not yours.
+Durable checkpointing — you already have AsyncSqliteSaver wired in run_research_with_persistence; gpt-researcher doesn't have this at all, so their recommendation doesn't apply to you.
+content_extractor.py Tavily batch-limit — that file is yours, not gpt-researcher's (their Tavily extract implementation is architected differently, single-URL calls), so their audit couldn't confirm or deny your specific bug. Still genuinely open on your end — worth checking directly rather than via their codebase.
+Groq pricing lookup — gpt-researcher doesn't use Groq, so their cost file has nothing to import. Your placeholder is still open, separate task.
+
+Want me to start with #1 (retry/backoff) or #2 (apply the 0.0 threshold + rerun), since #2 is a one-line change and currently blocking correct output?

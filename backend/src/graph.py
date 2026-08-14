@@ -141,7 +141,12 @@ async def relevance_filter(state: ResearchState) -> dict:
     if not state.claims:
         return {}
 
-    kept, scores = filter_by_relevance(state.claims, state.research_topic, min_score=config.min_relevance_score)
+    kept, scores = filter_by_relevance(
+        state.claims,
+        state.research_topic,
+        keep_ratio=config.relevance_keep_ratio,
+        min_survivors=config.relevance_min_survivors,
+    )
 
     if scores:
         logger.info(

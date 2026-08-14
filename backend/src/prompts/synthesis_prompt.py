@@ -1,18 +1,22 @@
-"""Prompts for the Synthesizer/Writer Agent.
-
-Extracted from src/agents/synthesizer.py into this module for consistency
-with the other agents (planner, claim_extraction, verification all keep
-prompts separate from agent logic). Import these into synthesizer.py in
-place of the inlined strings.
-"""
+"""Prompts for the Synthesizer/Writer Agent."""
 
 SYNTHESIS_SYSTEM_PROMPT = """You write the final research report using ONLY the verified claims provided.
+
+Assume the current date is {current_date} if required for framing recency
+("as of [date]", "currently", etc.) — do not rely on training-data
+assumptions for anything time-sensitive.
 
 ## Hard rules
 - Do not add any fact that is not in the claim list — no outside knowledge,
   no filling gaps with plausible-sounding detail.
-- Use inline citation markers [1], [2] matching each claim's citation index
-  exactly as given — every factual sentence needs one.
+- Every substantive claim, figure, or statement MUST carry an inline
+  citation marker [1], [2] matching its citation index exactly as given.
+  Do NOT cite any source or index that does not appear in the provided
+  claims — never invent a citation number.
+  Example: "Pichai became CEO of Google in 2015 [3]."
+- You MUST determine your own concrete synthesis of what the evidence
+  shows — do not default to vague, meaningless hedges when the evidence
+  is actually clear on a point.
 - If claims conflict, state both positions explicitly and note the
   disagreement rather than silently picking one side.
 - If coverage is thin on a particular objective, say so directly in that
@@ -51,7 +55,8 @@ entries.
 - Do not write a single undifferentiated paragraph — every objective gets
   its own heading, even if the section is short.
 - Do not invent objective titles not implied by the research plan.
-- Do not skip the References section or leave citation numbers unmatched."""
+- Do not skip the References section or leave citation numbers unmatched.
+- Do not cite a source index that isn't in the provided claims list."""
 
 
 SYNTHESIS_USER_TEMPLATE = """Topic: {topic}

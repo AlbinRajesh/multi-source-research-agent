@@ -11,6 +11,7 @@ from src.state import ResearchState, ResearchPlan, SearchQuery
 from src.prompts.planner_prompt import PLANNER_SYSTEM_PROMPT, PLANNER_USER_TEMPLATE
 from src.config import config
 from src.exceptions import PlanningError
+from datetime import datetime, timezone
 from src.utils.llm_factory import get_llm
 from metrics.token_counter import track_llm_call
 
@@ -57,6 +58,7 @@ class PlannerAgent:
             max_queries=config.max_search_queries,
             max_sections=config.max_report_sections,
             local_docs_note=local_note,
+            current_date=datetime.now(timezone.utc).strftime('%B %d, %Y'),
         )
         prompt = ChatPromptTemplate.from_messages([("system", system_prompt), ("human", PLANNER_USER_TEMPLATE)])
 

@@ -45,7 +45,7 @@ class ResumeRequest(BaseModel):
     thread_id: str
 
 
-# 4. All routes — existing ones stay as they are, new /research/stream added below
+# 4. All routes
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -53,13 +53,11 @@ async def health():
 
 @app.post("/research")
 async def research(req: ResearchRequest):
-    # ...unchanged, your existing code...
     ...
 
 
 @app.post("/research/resume")
 async def research_resume(req: ResumeRequest):
-    # ...unchanged, your existing code...
     ...
 
 
@@ -112,13 +110,14 @@ def _summarize(node_name: str, output: dict) -> dict:
     if node_name == "check_retry":
         return {"node": node_name, "route": output.get("route_decision")}
     if node_name == "synthesize":
+        if "error" in output:
+            return {"node": node_name, "error": output["error"]}
         return {
             "node": node_name,
             "final_report": output.get("final_report", ""),
             "citations": output.get("citations", []),
         }
     return {"node": node_name}  
-
 
 
 if __name__ == "__main__":

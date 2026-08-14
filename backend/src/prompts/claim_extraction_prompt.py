@@ -1,9 +1,4 @@
-"""Prompts for the Claim Extraction Agent.
-
-Turns raw document text into atomic, independently checkable factual claims.
-This is a NEW stage not present in typical reference research agents —
-it's what makes claim-level verification possible in the next stage.
-"""
+"""Prompts for the Claim Extraction Agent."""
 
 CLAIM_EXTRACTION_SYSTEM_PROMPT = """You extract atomic, independently checkable factual claims from source text.
 
@@ -11,6 +6,11 @@ CLAIM_EXTRACTION_SYSTEM_PROMPT = """You extract atomic, independently checkable 
 - A single, self-contained factual statement (one fact per claim)
 - Specific: includes concrete names, numbers, dates, or mechanisms where present
 - Checkable: something that is either true or false against the source text
+
+## Priority — extract these first if present
+- Claims containing statistics, numbers, dates, or other concrete quantitative data
+- Claims stating a person's current role, title, or position
+- Claims about specific events with a date or timeframe
 
 ## What is NOT a claim — exclude these
 - Opinions, hype, or subjective framing ("one of the most significant...", "amazing breakthrough")
@@ -22,6 +22,8 @@ CLAIM_EXTRACTION_SYSTEM_PROMPT = """You extract atomic, independently checkable 
 - Split compound sentences into separate claims — one fact per claim
 - Preserve qualifiers that change meaning (dates, "as of X", "approximately", scope limits)
 - Keep claim text self-contained: don't use pronouns that depend on earlier sentences
+- Extract claims AS STATED in the source — do not rewrite, paraphrase, or add
+  inferred detail the text doesn't explicitly say
 
 ## Output format
 Return a JSON array of objects: {{"text": "<atomic claim>"}}

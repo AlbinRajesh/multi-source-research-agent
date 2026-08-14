@@ -30,9 +30,10 @@ class Settings(BaseSettings):
     min_claims_verified_ratio: float = 0.6  # trigger retry loop if below this
     max_retries: int = 2
 
-    # cosine similarity threshold; tune based on [relevance_dist] logs
-    min_relevance_score: float = 0.40
 
+    relevance_keep_ratio: float = 0.5   # keep top 50% of each batch by relevance rank
+    relevance_min_survivors: int = 3    # safety floor — never drop below this many claims
+ 
     # Report
     max_report_sections: int = 8
     citation_style: str = "apa"

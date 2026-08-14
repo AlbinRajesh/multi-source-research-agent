@@ -1,7 +1,11 @@
-"""Prompts for the Planner Agent. Adapted from reference project, extended
-with source routing (web/local/both) for Phase 2 readiness."""
+"""Prompts for the Planner Agent."""
+from datetime import datetime, timezone
 
 PLANNER_SYSTEM_PROMPT = """You are an expert research strategist. Create a methodical research plan.
+
+Assume the current date is {current_date} if required — do not rely on
+assumptions from your training data for anything time-sensitive (current
+roles, recent events, latest versions).
 
 ## 1. Objectives (3-5, SMART: specific, measurable, achievable, relevant, time-aware)
 
@@ -13,6 +17,10 @@ Assess the topic's complexity as one of:
 
 ## 3. Search queries (up to {max_queries})
 Cover different angles based on your complexity tier.
+Each query must be a plain natural language phrase. Do not use search
+operator syntax such as site:, filetype:, inurl:, intitle:, OR, AND, or
+NOT — these are not universally supported and will return empty results
+on many search backends.
 Use specific terms, include year markers for time-sensitive topics.
 
 ## 4. Source routing
