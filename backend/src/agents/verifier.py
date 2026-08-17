@@ -11,6 +11,7 @@ import json
 import logging
 from collections import defaultdict
 from typing import Dict, Any, List
+from json_repair import repair_json
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -54,6 +55,13 @@ class VerificationAgent:
             text = doc.content or doc.snippet
             if not text:
                 return
+
+            # Skip snippet-only sources if content extraction failed, as a 1-2 sentence 
+            # preview is too thin to reliably ground or refute specific claims.
+            if not doc.content and len(text) < 200:
+                logger.info(f"[verify] skipping snippet-only source (no full content): {doc.url}")
+                return
+
             claims_block = "\n".join(f'- id: {c.id} | "{c.text}"' for c in claims)
             async with semaphore:
                 try:
@@ -133,4 +141,10 @@ class VerificationAgent:
             data = json.loads(raw, strict=False)
             return data if isinstance(data, list) else []
         except json.JSONDecodeError as e:
-            raise VerificationError("Failed to parse verification JSON", details=str(e))
+            try:
+                repaired = repair_json(raw)
+                data = json.loads(repaired)
+                logger.info("Recovered malformed verification JSON via json_repair")
+                return data if isinstance(data, list) else []
+            except Exception:
+                raise VerificationError("Failed to parse verification JSON", details=str(e))

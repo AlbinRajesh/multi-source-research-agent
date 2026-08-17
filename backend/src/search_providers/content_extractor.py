@@ -198,4 +198,12 @@ class ContentExtractor:
 
             await asyncio.gather(*[enhance_one(r) for r in fallback_targets])
 
+        # Visibility logging: track how many documents got full text vs snippet fallback
+        with_content = sum(1 for r in filtered_results if r.content)
+        without_content = len(filtered_results) - with_content
+        logger.info(
+            f"[content_extraction] {with_content}/{len(filtered_results)} results have full "
+            f"content; {without_content} will fall back to snippet-only"
+        )
+
         return filtered_results

@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import Dict, Any, List
 
 from langchain_core.prompts import ChatPromptTemplate
@@ -7,10 +8,21 @@ from langchain_core.output_parsers import StrOutputParser
 from src.state import ResearchState
 from src.utils.llm_factory import get_llm
 from src.processing.citations import format_citations
-from src.prompts.synthesis_prompt import SYNTHESIS_SYSTEM_PROMPT, SYNTHESIS_USER_TEMPLATE
+from src.prompts.synthesis_prompt import (
+    SYNTHESIS_SYSTEM_PROMPT, SYNTHESIS_USER_TEMPLATE,
+    SYNTHESIS_SIMPLE_SYSTEM_PROMPT, SYNTHESIS_SIMPLE_USER_TEMPLATE,
+)
 from metrics.token_counter import track_llm_call
-from datetime import datetime, timezone
+
 logger = logging.getLogger(__name__)
+
+# Complexity tiers that get the short-answer treatment. Anything not in
+# this set (moderate, complex, or an unexpected/missing value) falls
+# through to the structured report — the SAFER default for an enterprise
+# pipeline, since an over-long answer is a UX annoyance, but an
+# under-explained answer on a genuinely complex topic is a quality/trust
+# problem. Fail toward more structure, not less.
+SIMPLE_COMPLEXITY_TIERS = {"simple"}
 
 
 class SynthesizerAgent:
@@ -53,23 +65,47 @@ class SynthesizerAgent:
                 f'- {claim_by_id[v.claim_id].text}' for v in unconfirmed if v.claim_id in claim_by_id
             ][:10]
 
-            objectives = getattr(state.plan, "objectives", None) or []
-            objectives_block = "\n".join(f"{i+1}. {obj}" for i, obj in enumerate(objectives)) or "(none specified)"
+            current_date = datetime.now(timezone.utc).strftime('%B %d, %Y')
+
+            # Complexity gate — defensive read, never crash on a missing
+            # or malformed plan. getattr with a safe default means a
+            # None plan, an old cached plan without the field, or an
+            # unexpected value all fall through to structured (safer).
+            complexity = getattr(state.plan, "complexity", None) if state.plan else None
+            use_simple = complexity in SIMPLE_COMPLEXITY_TIERS
+
+            if use_simple:
+                logger.info(f"[synthesis_mode] complexity='{complexity}' -> simple direct-answer format")
+                system_prompt = SYNTHESIS_SIMPLE_SYSTEM_PROMPT
+                user_template = SYNTHESIS_SIMPLE_USER_TEMPLATE
+                input_vars = {
+                    "topic": state.research_topic,
+                    "claims_block": "\n".join(claims_lines) or "(none)",
+                    "unconfirmed_block": "\n".join(unconfirmed_lines) or "(none)",
+                    "current_date": current_date,
+                }
+            else:
+                logger.info(f"[synthesis_mode] complexity='{complexity}' -> structured report format")
+                system_prompt = SYNTHESIS_SYSTEM_PROMPT
+                user_template = SYNTHESIS_USER_TEMPLATE
+                objectives = getattr(state.plan, "objectives", None) or []
+                objectives_block = "\n".join(f"{i+1}. {obj}" for i, obj in enumerate(objectives)) or "(none specified)"
+                input_vars = {
+                    "topic": state.research_topic,
+                    "objectives_block": objectives_block,
+                    "claims_block": "\n".join(claims_lines) or "(none)",
+                    "unconfirmed_block": "\n".join(unconfirmed_lines) or "(none)",
+                    "current_date": current_date,
+                }
 
             prompt = ChatPromptTemplate.from_messages(
-                [("system", SYNTHESIS_SYSTEM_PROMPT), ("human", SYNTHESIS_USER_TEMPLATE)]
+                [("system", system_prompt), ("human", user_template)]
             )
             chain = prompt | self.llm | StrOutputParser()
 
             answer = await track_llm_call(
                 chain,
-                {
-                    "topic": state.research_topic,
-                    "objectives_block": objectives_block,
-                    "claims_block": "\n".join(claims_lines) or "(none)",
-                    "unconfirmed_block": "\n".join(unconfirmed_lines) or "(none)",
-                    "current_date": datetime.now(timezone.utc).strftime('%B %d, %Y'),
-                },
+                input_vars,
                 tracker=getattr(state, "token_tracker", None),
                 node="synthesize",
                 model=self.model_name,

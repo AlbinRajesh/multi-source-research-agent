@@ -8,8 +8,9 @@ import json
 import logging
 import uuid
 from typing import Dict, Any, List
+from json_repair import repair_json
 from src.config import config
-
+from typing import Optional
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
@@ -28,7 +29,7 @@ class ClaimExtractionAgent:
     BOILERPLATE_PATTERNS = [
         r"^\[.*\]\(#.*\)",              # markdown anchor links, e.g. [Skip Navigation](#MainContent)
         r"\bsubscribe\b.*\bpro\b",       # subscription CTAs
-        r"__source=|tpcc=|utm_",         # tracking query params leaking into text
+        r"__source=|tpcc=|utm_",        # tracking query params leaking into text
         r"^(cookie|privacy) (policy|notice|settings)",
         r"^(home|menu|navigation|sign in|log in|sign up)$",
     ]
@@ -68,18 +69,35 @@ class ClaimExtractionAgent:
             if not text:
                 return []
             async with semaphore:
+                raw = None
+                last_error = None
+                for attempt in range(3):  # 3 attempts with short exponential backoff for resilience
+                    try:
+                        raw = await track_llm_call(
+                            chain,
+                            {
+                                "source_name": doc.source_name or doc.url,
+                                "document_text": text[:3000],  # bound input size for rate limits
+                            },
+                            tracker=state.token_tracker,
+                            node="extract_claims",
+                            model=self.model_name,
+                        )
+                        break  # success
+                    except Exception as e:
+                        last_error = e
+                        if attempt < 2:
+                            logger.warning(f"[retry] extraction attempt {attempt+1} failed for {doc.url}: {e}")
+                            await asyncio.sleep(1.5 * (attempt + 1))  # 1.5s, then 3s
+
+                if raw is None:
+                    logger.warning(f"Claim extraction failed for {doc.url} after 3 attempts: {last_error}")
+                    return []
+
                 try:
-                    raw = await track_llm_call(
-                        chain,
-                        {
-                            "source_name": doc.source_name or doc.url,
-                            "document_text": text[:3000],  # bound input size for rate limits
-                        },
-                        tracker=state.token_tracker,
-                        node="extract_claims",
-                        model=self.model_name,
-                    )
                     parsed = self._parse_json_array(raw)
+                    if not parsed:
+                        logger.warning(f"[claim_parse] zero claims parsed from {doc.url} — raw response: {raw[:200]}")
 
                     # Filter boilerplate BEFORE capping, so the cap counts real claims, not junk
                     parsed = [item for item in parsed if not self._is_boilerplate(item.get("text", ""))]
@@ -103,7 +121,7 @@ class ClaimExtractionAgent:
                         if item.get("text")
                     ]
                 except Exception as e:
-                    logger.warning(f"Claim extraction failed for {doc.url}: {e}")
+                    logger.warning(f"Claim extraction failed parsing for {doc.url}: {e}")
                     return []
 
         new_indices = [i for i in range(len(state.search_results)) if i not in set(state.processed_result_indices)]
@@ -132,13 +150,51 @@ class ClaimExtractionAgent:
         raw = raw.strip()
         if not raw:
             return []
-        # strip markdown fences if the model added them despite instructions
         if raw.startswith("```"):
             raw = raw.strip("`")
             if raw.startswith("json"):
                 raw = raw[4:]
+
         try:
             data = json.loads(raw, strict=False)
-            return data if isinstance(data, list) else []
         except json.JSONDecodeError as e:
-            raise ClaimExtractionError("Failed to parse claim JSON", details=str(e))
+            try:
+                repaired = repair_json(raw)
+                data = json.loads(repaired)
+                logger.info("Recovered malformed claim JSON via json_repair")
+            except Exception:
+                raise ClaimExtractionError("Failed to parse claim JSON", details=str(e))
+
+        if isinstance(data, list):
+            return data
+
+        if isinstance(data, dict):
+            # format="json" makes small models wrap the array under an
+            # unpredictable key ("claims", "text", "items", or nested deeper)
+            # — a fixed whitelist keeps missing new keys the model invents.
+            # Instead, search the object's values for the first list whose
+            # items look like claim objects (dicts with a "text" field).
+            found = ClaimExtractionAgent._find_claim_list(data)
+            if found is not None:
+                return found
+            logger.warning(f"[claim_parse] got JSON object with no usable claim list, keys={list(data.keys())}")
+
+        return []
+
+    @staticmethod
+    def _find_claim_list(obj, depth: int = 0) -> Optional[List[dict]]:
+        """Recursively search a parsed JSON object for a list of claim-shaped
+        dicts (each having a 'text' key). Depth-limited to avoid pathological
+        nesting."""
+        if depth > 3:
+            return None
+        if isinstance(obj, list):
+            if obj and all(isinstance(item, dict) and "text" in item for item in obj):
+                return obj
+            return None
+        if isinstance(obj, dict):
+            for value in obj.values():
+                result = ClaimExtractionAgent._find_claim_list(value, depth + 1)
+                if result is not None:
+                    return result
+        return None

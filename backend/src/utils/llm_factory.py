@@ -23,7 +23,7 @@ def get_llm(
     model_override: Optional[str] = None,
     model_override_key: Optional[str] = None,
     provider_override: Optional[str] = None,
-    max_tokens: Optional[int] = None,  # NEW
+    max_tokens: Optional[int] = None,
 ) -> BaseChatModel:
     """Get an LLM instance based on config.
 
@@ -55,7 +55,13 @@ def get_llm(
                 base_url=config.ollama_base_url,
                 temperature=temperature,
                 num_ctx=8192,
-                num_predict=max_tokens if max_tokens else -1,  # -1 = Ollama default (unbounded)
+                num_predict=max_tokens if max_tokens else -1,
+                # format="json" removed — caused this 3B model to abandon the
+                # array-of-objects schema entirely (collapsing to a single string
+                # or inconsistent wrapper keys) rather than producing valid JSON
+                # in the requested shape. The prompt's "return ONLY a JSON array"
+                # instruction + json_repair as a safety net proved more reliable
+                # than Ollama's native JSON-mode for this model/schema combo.
             )
 
         elif provider == "openai":
