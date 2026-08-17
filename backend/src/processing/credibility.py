@@ -48,7 +48,7 @@ class CredibilityScorer:
         # Company/official sources — a company's own blog/newsroom is a
         # primary source for facts about that company (e.g. blog.google
         # for Google/Alphabet leadership facts)
-        'blog.google', 'about.google', 'newsroom.',
+        '.google', 'googleblog.com', 'newsroom.',
     }
 
     SUSPICIOUS_PATTERNS = [

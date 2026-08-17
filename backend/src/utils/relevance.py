@@ -49,6 +49,7 @@ def filter_by_relevance(
     topic: str,
     keep_ratio: float = 0.65,
     min_survivors: int = 5,
+    skip_below: int = 20,
 ) -> Tuple[List, List[float]]:
     """
     claims: list of Claim objects (must have .text)
@@ -61,6 +62,9 @@ def filter_by_relevance(
         previously forced wasted retry cycles or empty synthesis.
     Returns (kept_claims, all_scores) — all_scores is for distribution logging.
     """
+    if len(claims) < skip_below:
+        logger.info(f"[relevance] skipped (n={len(claims)} < {skip_below}) — too few claims to safely rerank")
+        return claims, [0.0] * len(claims)
     if not claims:
         return [], []
 

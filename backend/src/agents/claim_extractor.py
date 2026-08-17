@@ -76,6 +76,7 @@ class ClaimExtractionAgent:
 
         async def extract_one(idx: int, doc) -> List[Claim]:
             text = doc.content or doc.snippet
+            logger.info(f"[debug] {doc.url} content_len={len(text)} preview={text[:300]!r}")
             if not text:
                 return []
             async with semaphore:

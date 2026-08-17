@@ -68,6 +68,7 @@ class VerificationAgent:
                 return
 
             claims_block = "\n".join(f'- id: {c.id} | "{c.text}"' for c in claims)
+            logger.info(f"[debug] {url} content_len={len(text)} truncated={len(text)>1500}")  # ADD
             async with semaphore:
                 try:
                     raw = await track_llm_call(
@@ -75,7 +76,7 @@ class VerificationAgent:
                     {
                         "claims_block": claims_block,
                         "source_name": doc.source_name or doc.url,
-                        "source_text": text[:1500],
+                        "source_text": self._get_relevant_excerpt(text, claims),
                     },
                     tracker=state.token_tracker,
                     node="verify",
@@ -89,6 +90,8 @@ class VerificationAgent:
                             grounded_results[cid].append(url)
                         if item.get("contradicts"):
                             contradicted_results[cid].append(url)
+                        else:
+                            logger.info(f"[debug] UNGROUNDED claim_id={cid} content_len={len(text)}")  # ADD
                 except Exception as e:
                     logger.warning(f"Verification failed for source {url}: {e}")
                     for c in claims:
@@ -168,3 +171,30 @@ class VerificationAgent:
                     return data[key]
             logger.warning(f"[verification_parse] got JSON object with no known array key, keys={list(data.keys())}")
         return []
+
+    @staticmethod
+    def _get_relevant_excerpt(text: str, claims: list, window: int = 2000, max_total: int = 6000) -> str:
+        """Pull text windows around claim-keyword matches instead of blind truncation."""
+        if len(text) <= max_total:
+            return text
+        spans = []
+        for c in claims:
+            words = c.text.split()
+            if not words:
+                continue
+            idx = text.lower().find(words[0].lower())
+            if idx != -1:
+                spans.append((max(0, idx - 200), min(len(text), idx + window)))
+        if not spans:
+            return text[:max_total]
+        spans.sort()
+        merged, cur = [], list(spans[0])
+        for s in spans[1:]:
+            if s[0] <= cur[1]:
+                cur[1] = max(cur[1], s[1])
+            else:
+                merged.append(tuple(cur))
+                cur = list(s)
+        merged.append(tuple(cur))
+        excerpt = " ... ".join(text[a:b] for a, b in merged)
+        return excerpt[:max_total]
