@@ -29,14 +29,26 @@ class TavilySearchProvider(SearchProvider):
         try:
             response = await asyncio.to_thread(self.client.search, query=query, max_results=limit, search_depth="basic")
             results = []
+            skipped = 0
             for item in response.get("results", []):
+                url = item.get("url")
+                if not url:
+                    # Never fabricate/default a URL — an empty string here
+                    # used to silently propagate through dedup, credibility
+                    # scoring, and citations, ending up as href="" in the
+                    # frontend, which the browser resolves to the current
+                    # page instead of showing a broken/missing link.
+                    skipped += 1
+                    continue
                 results.append(SearchResult(
                     query=query,
                     title=item.get("title") or "",
-                    url=item.get("url") or "",
+                    url=url,
                     snippet=item.get("content") or "",
                     source_type="web",
                 ))
+            if skipped:
+                logger.warning(f"Tavily: skipped {skipped} result(s) with no URL for '{query}'")
             logger.info(f"Tavily: {len(results)} results for '{query}'")
             return results
         except Exception as e:

@@ -12,6 +12,7 @@ import logging
 from collections import defaultdict
 from typing import Dict, Any, List
 from json_repair import repair_json
+from src.config import config
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -70,16 +71,17 @@ class VerificationAgent:
             async with semaphore:
                 try:
                     raw = await track_llm_call(
-                        chain,
-                        {
-                            "claims_block": claims_block,
-                            "source_name": doc.source_name or doc.url,
-                            "source_text": text[:1500],
-                        },
-                        tracker=state.token_tracker,
-                        node="verify",
-                        model=self.model_name,
-                    )
+                    chain,
+                    {
+                        "claims_block": claims_block,
+                        "source_name": doc.source_name or doc.url,
+                        "source_text": text[:1500],
+                    },
+                    tracker=state.token_tracker,
+                    node="verify",
+                    model=self.model_name,
+                    provider=config.model_provider,
+                )
                     parsed = self._parse_json_array(raw)
                     for item in parsed:
                         cid = item.get("claim_id")

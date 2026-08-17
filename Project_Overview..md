@@ -606,3 +606,127 @@ content_extractor.py Tavily batch-limit — that file is yours, not gpt-research
 Groq pricing lookup — gpt-researcher doesn't use Groq, so their cost file has nothing to import. Your placeholder is still open, separate task.
 
 Want me to start with #1 (retry/backoff) or #2 (apply the 0.0 threshold + rerun), since #2 is a one-line change and currently blocking correct output?
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Final Fix Plan — Ordered
+Priority 1 — Live bugs blocking correct output
+
+1. Set min_relevance_score to 0.0 (calibrated fix)
+
+Real facts scored 0.13–8.41, trivia scored -2.83 to -11.41 — clean gap at 0
+One-line change, currently causing correct answers (e.g. CEO name) to be dropped
+Rerun simple-mode CEO query after to confirm fix
+
+2. Safety floor on relevance filter
+
+If filtering would drop below min count (e.g. 3 claims), keep top-N by score instead of zeroing out
+Prevents a full run failure when every claim scores low
+
+3. Fix claim_extractor.py list/dict parsing crash
+
+'list' object has no attribute 'get' — still present in your last 3 logs, fix discussed earlier was never applied
+python
+if isinstance(data, list):
+    if data and all(isinstance(item, list) for item in data):
+        data = [item for sub in data for item in sub]
+    return [item for item in data if isinstance(item, dict) and "text" in item]
+
+4. Fix broken citation URL (localhost:5173 fallback)
+
+Citation [1] in simple-mode run linked to the app's own base URL instead of the real article
+Check citation object construction / frontend href mapping for a missing doc.url defaulting silently
+Priority 2 — Synthesis/prompt fixes
+
+5. Apply the synthesis_prompt.py fix (already written, confirm it's deployed)
+
+Removes hallucinated ## References section from structured mode
+Confirmed working in one test, but re-verify it's actually in the running code given #3 recurred
+
+6. Planner query specificity for topical questions
+
+"Main AI products in 2026" pulled an unrelated shoe-company story
+Tighten planner prompt to anchor queries to concrete product/launch terms when topic is product-specific
+
+7. Planner temporal decomposition (not yet implemented)
+
+Evolution/timeline questions ("since 2020") still collapse to recent-only coverage
+Add rule: split date ranges into sub-period queries, bump complexity tier for temporal questions
+Priority 3 — Resilience/hardening
+
+8. Tavily retry-with-backoff
+
+No retry on Tavily failure currently — a 429/timeout silently drops that sub-query
+Wrap in retry (~3 attempts, backoff), keep under existing semaphore in retriever.py
+
+9. Groq TokenRateLimiter integration
+
+429s costing 10–15s per run across verify/synthesize stages
+This was already on your roadmap — now has clear evidence it's actively slowing every run
+
+10. Consolidate COMPLEXITY_LIMITS
+
+Currently possibly duplicated between graph.py and planner.py
+Move to config.py as single source, import in both
+Priority 4 — Frontend
+
+11. Confirm Tailwind is applying to CitationList.jsx
+
+"Single sourceweb" spacing bug still present after the markdown fix (which only touched AnswerDisplay.jsx)
+Run the red-border test to confirm Tailwind is actually hitting this file before assuming it's a code bug
+Priority 5 — Performance (no correctness impact, do last)
+
+12. Speed up Extract Claims stage
+
+~48s avg, worst bottleneck in every run
+Raise max_concurrent above 2, or restrict extraction more aggressively to only newly-fetched docs
+
+13. Reranker double-load fix
+
+Cross-encoder reloading/re-instantiating on retry passes — redundant HF cache roundtrips on a 4GB card
+Still open, not yet root-caused
+content_extractor.py Tavily batch-limit — worth checking directly since it's your own file, unconfirmed either way
+Groq pricing lookup placeholder — separate, low-urgency task
+
+Start with #1–#4 today — those are the ones actively producing wrong or broken answers. Send me retriever.py or the relevance filter code when ready for #1/#2.
+
+
+---------------------------------------------------------------------------------------------------
+Handoff Summary — multi_source_researcher debugging session
+Project context
+
+Backend: FastAPI + LangGraph pipeline (Plan → Search → Extract → Verify → Synthesize). Frontend: React/Vite + Tailwind v4. LLM stack: Groq (openai/gpt-oss-20b) for planner/verifier/synthesizer, Ollama (qwen2.5:3b-instruct) for claim extraction. Search via Tavily.
+
+Where we left off
+
+Just finished wiring a custom TokenRateLimiter to fix Groq free-tier TPM throttling (429s costing 10–15s/run). The limiter class and tracker integration are written and reviewed correct — but the actual call-site edits (provider= kwarg) have not yet been confirmed as applied to the live repo. That's the immediate next step.
+
+Fixes locked in during this session (confirm all are actually applied in your repo — several were "written but not yet pasted in" at various points)
+claim_extractor.py — _parse_json_array: flatten nested lists before validating, instead of returning raw data unchecked (was causing 'list' object has no attribute 'get' crashes, silently dropping whole documents).
+python
+if isinstance(data, list):
+    if data and all(isinstance(item, list) for item in data):
+        data = [item for sub in data for item in sub]
+    return [item for item in data if isinstance(item, dict) and "text" in item]
+src/utils/relevance.py — raised keep_ratio 0.5→0.65, min_survivors 3→5 (rank-based filter was cutting correct-but-lower-scoring facts, e.g. a named CEO at score -10).
+src/search_providers/tavily_provider.py — stop defaulting missing url to "" (was causing broken localhost:5173 citation links). Now skips URL-less results and logs a warning.
+src/agents/retriever.py — added retry-with-backoff (3 attempts, 1.5s/3s/6s) around each sub-query in bounded_search; asyncio.gather changed to return_exceptions=True so one failed query doesn't kill the whole search stage.
+src/prompts/synthesis_prompt.py — removed the ## References section instruction from SYNTHESIS_SYSTEM_PROMPT (structured mode). LLM was hallucinating a fake references list by echoing claim text, duplicating the real one from citations.py. Confirmed already correctly applied in repo.
+src/prompts/planner_prompt.py — two additions drafted, not yet confirmed applied:
+Temporal decomposition rule for "since X" / evolution questions (split into sub-period queries)
+Query specificity rule for product/entity questions (anchor to concrete terms, not broad category terms)
+Complexity tier note: multi-year date range questions should be rated "complex" minimum
+metrics/token_rate_limiter.py — new file, sliding-window TPM limiter (groq_token_limiter, 8000 TPM budget × 0.9 safety margin). Written and confirmed correct.
+metrics/token_counter.py — track_llm_call() and TokenTrackingCallback updated to take explicit provider: str param instead of sniffing "groq" in model.lower() (which never matched since model name is "openai/gpt-oss-20b" with no "groq" substring). Confirmed correct.
+Immediate next steps (in order)
+Add provider= kwarg to all 4 track_llm_call(...) call sites — this is what actually activates the rate limiter, nothing works without it:
+planner.py: add provider=config.model_provider, (config already imported)
+synthesizer.py: add provider=config.model_provider, and add from src.config import config to imports (not currently there)
+verifier.py: add provider=config.model_provider, and add from src.config import config to imports (not currently there)
+claim_extractor.py: add provider="ollama", (should stay excluded from Groq rate limiting)
+Confirm items #1, #2, #3, #4, #6 above are actually pasted into the live repo (several were discussed/written but user hadn't yet confirmed applying them before the conversation moved on).
+Once rate limiter is fully wired, rerun the 3 test queries (simple/moderate/complex from earlier) and check: (a) time saved on verify/synthesize stages, (b) CEO-name fact survives relevance filtering now, (c) no more broken localhost:5173 citations.
+Still open / not started
+Consolidate COMPLEXITY_LIMITS (currently in planner.py, possibly duplicated in graph.py) into config.py as single source
+Confirm Tailwind is actually applying to CitationList.jsx (red-border test) — "Single sourceweb" spacing bug still unconfirmed root-caused
+Extract Claims stage speed (~48s avg bottleneck) — raise max_concurrent above 2, or restrict extraction more aggressively
+Reranker (cross-encoder) reloading/reinstantiating on every retry pass — redundant HF cache roundtrips on 4GB GPU
+content_extractor.py Tavily batch chunking — reviewed, confirmed already correct, no action needed

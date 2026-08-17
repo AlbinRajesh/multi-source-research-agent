@@ -4,6 +4,7 @@ from typing import Dict, Any, List
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from src.config import config
 
 from src.state import ResearchState
 from src.utils.llm_factory import get_llm
@@ -131,12 +132,13 @@ class SynthesizerAgent:
             chain = prompt | self.llm | StrOutputParser()
 
             answer = await track_llm_call(
-                chain,
-                input_vars,
-                tracker=getattr(state, "token_tracker", None),
-                node="synthesize",
-                model=self.model_name,
-            )
+            chain,
+            input_vars,
+            tracker=getattr(state, "token_tracker", None),
+            node="synthesize",
+            model=self.model_name,
+            provider=config.model_provider,
+        )
 
             citations = format_citations(
                 usable, claim_by_id, citation_index_map, state.search_results, style="apa"

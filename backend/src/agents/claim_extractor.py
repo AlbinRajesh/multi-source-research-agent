@@ -87,11 +87,12 @@ class ClaimExtractionAgent:
                             chain,
                             {
                                 "source_name": doc.source_name or doc.url,
-                                "document_text": text[:3000],  # bound input size for rate limits
+                                "document_text": text[:3000],
                             },
                             tracker=state.token_tracker,
                             node="extract_claims",
                             model=self.model_name,
+                            provider="ollama",
                         )
                         break  # success
                     except Exception as e:
@@ -175,7 +176,16 @@ class ClaimExtractionAgent:
                 raise ClaimExtractionError("Failed to parse claim JSON", details=str(e))
 
         if isinstance(data, list):
-            return data
+            # Occasionally the model nests claims by category, returning
+            # a list of lists instead of a flat array — flatten one level
+            # before validating, and drop anything that isn't a proper
+            # {"text": ...} claim dict. Previously this returned `data`
+            # unchecked, so a nested list reached `item.get("text", "")`
+            # downstream and crashed with 'list' object has no attribute
+            # 'get', silently losing that whole document's claims.
+            if data and all(isinstance(item, list) for item in data):
+                data = [item for sub in data for item in sub]
+            return [item for item in data if isinstance(item, dict) and "text" in item]
 
         if isinstance(data, dict):
             found = ClaimExtractionAgent._find_claim_list(data)

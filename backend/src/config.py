@@ -2,6 +2,11 @@
 from pydantic_settings import BaseSettings
 from typing import Optional
 
+COMPLEXITY_LIMITS = {
+    "simple":   {"max_queries": 2, "max_results_per_query": 3},
+    "moderate": {"max_queries": 3, "max_results_per_query": 5},
+    "complex":  {"max_queries": 5, "max_results_per_query": 5},
+}
 
 class Settings(BaseSettings):
     # LLM
@@ -31,8 +36,8 @@ class Settings(BaseSettings):
     max_retries: int = 2
 
 
-    relevance_keep_ratio: float = 0.5   # keep top 50% of each batch by relevance rank
-    relevance_min_survivors: int = 3    # safety floor — never drop below this many claims
+    relevance_keep_ratio: float = 0.60   # keep top 50% of each batch by relevance rank
+    relevance_min_survivors: int = 5   # safety floor — never drop below this many claims
  
     # Report
     max_report_sections: int = 8

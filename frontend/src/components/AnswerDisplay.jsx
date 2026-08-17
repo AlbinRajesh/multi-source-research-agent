@@ -20,6 +20,7 @@ export default function AnswerDisplay({ report, citations }) {
       <div className="font-body text-lg text-on-surface/90 leading-relaxed max-w-3xl prose prose-invert">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
+          urlTransform={(url) => url}   // Disable default sanitization so our citation: scheme survives
           components={{
             a: ({ href, children }) => {
               if (href?.startsWith("citation:")) {

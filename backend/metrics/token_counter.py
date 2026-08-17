@@ -1,17 +1,15 @@
-"""
-Per-run token accounting. Call record() after every LLM invocation with
-the node name and the raw usage object/dict from the provider response.
-Designed to be provider-agnostic across Groq and Ollama's OpenAI-compatible
-usage shape (prompt_tokens / completion_tokens).
+"""Per-run token accounting and sliding-window rate limiter.
+Call record() after every LLM invocation with the node name and the raw usage 
+object/dict from the provider response. Designed to be provider-agnostic 
+across Groq and Ollama's OpenAI-compatible usage shape (prompt_tokens / completion_tokens).
 """
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
 from langchain_core.callbacks.base import AsyncCallbackHandler
+from metrics.token_rate_limiter import groq_token_limiter, TokenRateLimiter
 
 logger = logging.getLogger(__name__)
-
-
 
 
 @dataclass
@@ -84,7 +82,7 @@ class TokenTracker:
                 for key, e in self.usage_by_node.items()
             },
         }
-# --- add these imports at the top ---
+
 
 class TokenTrackingCallback(AsyncCallbackHandler):
     """
@@ -93,10 +91,12 @@ class TokenTrackingCallback(AsyncCallbackHandler):
     it down to a plain string — this must run as a callback, not be
     inferred from the chain's return value.
     """
-    def __init__(self, tracker: "TokenTracker", node: str, model: str):
+    def __init__(self, tracker: Optional[TokenTracker], node: str, model: str, provider: str = "", reservation_id: Optional[int] = None):
         self.tracker = tracker
         self.node = node
         self.model = model
+        self.provider = provider
+        self.reservation_id = reservation_id
 
     async def on_llm_end(self, response, **kwargs) -> None:
         try:
@@ -107,19 +107,37 @@ class TokenTrackingCallback(AsyncCallbackHandler):
                 # fallback: LangChain's own usage_metadata on the AIMessage
                 msg = getattr(response.generations[0][0], "message", None)
                 usage = getattr(msg, "usage_metadata", None)
-            self.tracker.record(self.node, self.model, usage)
+
+            if self.tracker:
+                self.tracker.record(self.node, self.model, usage)
+
+            # Correct the rate limiter ledger with actual token counts if Groq was explicitly used
+            if self.provider.lower() == "groq" and self.reservation_id is not None:
+                actual_in, actual_out = TokenTracker._extract_tokens(usage)
+                actual_total = actual_in + actual_out
+                if actual_total > 0:
+                    groq_token_limiter.record_actual(self.reservation_id, actual_total)
         except Exception as e:
             logger.warning(f"[tokens] failed to record usage for node={self.node}: {e}")
 
 
-async def track_llm_call(chain, inputs: dict, tracker: Optional["TokenTracker"], node: str, model: str):
+async def track_llm_call(chain, inputs: dict, tracker: Optional[TokenTracker], node: str, model: str, provider: str = ""):
     """
-    Drop-in replacement for `await chain.ainvoke(inputs)` — records token
-    usage into `tracker` if one is provided, otherwise behaves identically
-    to a plain ainvoke (so this is safe to use even when tracker is None,
-    e.g. in isolated/unit-test agent calls).
+    Drop-in replacement for `await chain.ainvoke(inputs)` — rate limits Groq calls
+    based on TPM sliding windows explicitly via provider matching, and records usage into `tracker` if provided.
     """
-    if tracker is None:
-        return await chain.ainvoke(inputs)
-    callback = TokenTrackingCallback(tracker, node, model)
+    # Estimate token count for pre-call rate limiting (using input dict serialization)
+    input_str = str(inputs)
+    estimated_tokens = TokenRateLimiter.estimate_tokens(input_str) + 300  # +300 buffer for expected output
+
+    # Rate-limit only if the provider is explicitly set to groq. acquire()
+    # returns a reservation_id so the eventual correction in on_llm_end
+    # lands on THIS call's entry specifically, not whichever entry happens
+    # to be last in the deque — required for correctness when multiple
+    # calls are in flight concurrently (e.g. verifier.py's max_concurrent=2).
+    reservation_id = None
+    if provider.lower() == "groq":
+        reservation_id = await groq_token_limiter.acquire(estimated_tokens)
+
+    callback = TokenTrackingCallback(tracker, node, model, provider=provider, reservation_id=reservation_id)
     return await chain.ainvoke(inputs, config={"callbacks": [callback]})

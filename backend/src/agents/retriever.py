@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 class RetrieverAgent:
     MAX_CONCURRENT_SEARCHES = 5  # stay comfortably under the Tavily connection pool (size 10)
+    SEARCH_MAX_RETRIES = 3       # attempts per sub-query before giving up on it
+    SEARCH_RETRY_BASE_DELAY = 1.5  # seconds; backoff is base * 2**attempt
 
     def __init__(self, search_provider=None, extractor=None, scorer=None):
         self.search_provider = search_provider or self._get_default_provider()
@@ -41,12 +43,48 @@ class RetrieverAgent:
             semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_SEARCHES)
 
             async def bounded_search(q):
+                # Retry-with-backoff around the actual provider call. A single
+                # transient failure (timeout, 429, connection reset) used to
+                # silently drop that sub-query's results entirely — this gives
+                # it up to SEARCH_MAX_RETRIES attempts before giving up, same
+                # category of resilience as the Groq-side SDK backoff.
+                last_error = None
                 async with semaphore:
-                    return await self.search_provider.search(q.query, max_results=config.max_search_results_per_query)
+                    for attempt in range(self.SEARCH_MAX_RETRIES):
+                        try:
+                            return await self.search_provider.search(
+                                q.query, max_results=config.max_search_results_per_query
+                            )
+                        except Exception as e:
+                            last_error = e
+                            if attempt < self.SEARCH_MAX_RETRIES - 1:
+                                delay = self.SEARCH_RETRY_BASE_DELAY * (2 ** attempt)
+                                logger.warning(
+                                    f"[retry] search attempt {attempt + 1} failed for "
+                                    f"query {q.query!r}: {e} — retrying in {delay:.1f}s"
+                                )
+                                await asyncio.sleep(delay)
+                            else:
+                                logger.error(
+                                    f"Search failed for query {q.query!r} after "
+                                    f"{self.SEARCH_MAX_RETRIES} attempts: {last_error}"
+                                )
+                # All retries exhausted — return empty rather than raising, so
+                # gather() below doesn't need return_exceptions to survive this
+                # path; other sub-queries are unaffected either way.
+                return []
 
             tasks = [bounded_search(q) for q in web_queries]
-            results_per_query: List[List[SearchResult]] = await asyncio.gather(*tasks, return_exceptions=False)
-            all_results = [r for sub in results_per_query for r in sub]
+            # return_exceptions=True so one query's unexpected (non-retried)
+            # failure can't take down every other successful query's results.
+            results_per_query = await asyncio.gather(*tasks, return_exceptions=True)
+
+            all_results: List[SearchResult] = []
+            for q, res in zip(web_queries, results_per_query):
+                if isinstance(res, Exception):
+                    logger.error(f"Search task raised for query {q.query!r}: {res}")
+                    continue
+                all_results.extend(res)
 
             all_results = await self.extractor.enhance_results(all_results)
             

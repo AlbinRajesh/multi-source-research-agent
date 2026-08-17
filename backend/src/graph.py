@@ -14,7 +14,7 @@ from metrics.token_counter import TokenTracker
 from pathlib import Path
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
-from src.config import config
+from src.config import config, COMPLEXITY_LIMITS
 import time
 from functools import wraps
 
@@ -30,19 +30,12 @@ from src.agents.verifier import VerificationAgent
 from src.agents.synthesizer import SynthesizerAgent
 from src.exceptions import ResearchAgentError
 from src.utils.relevance import filter_by_relevance
+from src.config import config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Complexity tiers — used to cap retry query volume.
-# =============================================================================
-COMPLEXITY_LIMITS = {
-    "simple":   {"max_queries": 2, "max_results_per_query": 3},
-    "moderate": {"max_queries": 3, "max_results_per_query": 5},
-    "complex":  {"max_queries": 5, "max_results_per_query": 5},
-}
 
 
 # =============================================================================

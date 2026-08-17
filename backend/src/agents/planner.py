@@ -9,7 +9,7 @@ from langchain_core.output_parsers import JsonOutputParser
 
 from src.state import ResearchState, ResearchPlan, SearchQuery
 from src.prompts.planner_prompt import PLANNER_SYSTEM_PROMPT, PLANNER_USER_TEMPLATE
-from src.config import config
+from src.config import config, COMPLEXITY_LIMITS
 from src.exceptions import PlanningError
 from datetime import datetime, timezone
 from src.utils.llm_factory import get_llm
@@ -17,11 +17,6 @@ from metrics.token_counter import track_llm_call
 
 logger = logging.getLogger(__name__)
 
-COMPLEXITY_LIMITS = {
-    "simple":   {"max_queries": 2, "max_results_per_query": 3},
-    "moderate": {"max_queries": 3, "max_results_per_query": 5},
-    "complex":  {"max_queries": 5, "max_results_per_query": 5},
-}
 
 SIMPLE_TOPIC_PATTERNS = [
     r"^(who|what|when|where)\s+is\b",
@@ -71,6 +66,7 @@ class PlannerAgent:
                     tracker=state.token_tracker,
                     node="plan",
                     model=self.model_name,
+                    provider=config.model_provider,
                 )
 
                 if not all(k in result for k in ("topic", "objectives", "search_queries", "report_outline")):

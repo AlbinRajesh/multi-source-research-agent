@@ -14,6 +14,17 @@ biographical facts along with genuine trivia. Relative ranking within
 a batch stays meaningful even when the absolute scale drifts, which is
 the standard fix for this exact instability (percentile/top-K selection
 instead of absolute threshold).
+
+keep_ratio / min_survivors tuning (raised from 0.5 / 3):
+Evaluation runs showed the specific correct answer to a lookup question
+(a named CEO, score -10.00) getting cut even with a min_survivors floor
+in place — the floor only prevents a batch collapsing to zero, it does
+not protect one specific important-but-lower-scoring claim from being
+outranked by several more generically topic-relevant claims within a
+0.5 keep_ratio cut. Raising keep_ratio to 0.65 and min_survivors to 5
+keeps more borderline claims through to verification, which is cheap
+insurance — the verifier will still reject genuinely irrelevant ones,
+whereas the relevance filter dropping a correct claim is unrecoverable.
 """
 import logging
 from typing import List, Tuple
@@ -36,13 +47,13 @@ def _get_model():
 def filter_by_relevance(
     claims: List,
     topic: str,
-    keep_ratio: float = 0.5,
-    min_survivors: int = 3,
+    keep_ratio: float = 0.65,
+    min_survivors: int = 5,
 ) -> Tuple[List, List[float]]:
     """
     claims: list of Claim objects (must have .text)
     keep_ratio: fraction of the batch to keep, ranked by relevance score
-        (e.g. 0.5 = keep the top half). Robust to score-scale drift
+        (e.g. 0.65 = keep the top 65%). Robust to score-scale drift
         since it's relative to the batch, not an absolute cutoff.
     min_survivors: safety-net floor — if keep_ratio would leave fewer
         than this many claims, keep this many instead (top-N by rank).
