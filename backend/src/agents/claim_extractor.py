@@ -7,10 +7,10 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from json_repair import repair_json
 from src.config import config
-from typing import Optional
+
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
@@ -27,11 +27,12 @@ class ClaimExtractionAgent:
     MAX_CLAIMS_PER_DOC = 6  # deterministic ceiling — do not rely on prompt compliance alone
 
     BOILERPLATE_PATTERNS = [
-        r"^\[.*\]\(#.*\)",              # markdown anchor links, e.g. [Skip Navigation](#MainContent)
-        r"\bsubscribe\b.*\bpro\b",       # subscription CTAs
-        r"__source=|tpcc=|utm_",        # tracking query params leaking into text
+        r"^\[.*\]\(#.*\)",
+        r"\bsubscribe\b.*\bpro\b",
+        r"__source=|tpcc=|utm_",
         r"^(cookie|privacy) (policy|notice|settings)",
         r"^(home|menu|navigation|sign in|log in|sign up)$",
+        r"\[.*\]\(https?://\w{2,3}\.\w+\.(org|com)/",
     ]
 
     def __init__(self, llm=None, max_concurrent: int = 2):
@@ -55,8 +56,17 @@ class ClaimExtractionAgent:
         if not state.search_results:
             return {"claims": [], "current_stage": "synthesizing"}
 
-        # dedup should already have run inside the retriever/processing step;
-        # here we assume state.search_results is already deduped
+        # Track processed documents by stable URL instead of fragile list indices,
+        # so retries correctly pick up newly added search results.
+        processed_urls = {c.source_url for c in state.claims}
+        docs_to_process = [
+            (i, doc) for i, doc in enumerate(state.search_results)
+            if doc.url not in processed_urls
+        ]
+
+        if not docs_to_process:
+            return {"current_stage": "verifying"}
+
         prompt = ChatPromptTemplate.from_messages(
             [("system", CLAIM_EXTRACTION_SYSTEM_PROMPT), ("human", CLAIM_EXTRACTION_USER_TEMPLATE)]
         )
@@ -124,20 +134,19 @@ class ClaimExtractionAgent:
                     logger.warning(f"Claim extraction failed parsing for {doc.url}: {e}")
                     return []
 
-        new_indices = [i for i in range(len(state.search_results)) if i not in set(state.processed_result_indices)]
-        if not new_indices:
-            return {"current_stage": "verifying"}
-
         try:
             results = await asyncio.gather(
-                *[extract_one(i, state.search_results[i]) for i in new_indices]
+                *[extract_one(i, doc) for i, doc in docs_to_process]
             )
             new_claims = [c for sub in results for c in sub]
-            logger.info(f"Extracted {len(new_claims)} claims from {len(new_indices)} new docs")
+            logger.info(f"Extracted {len(new_claims)} claims from {len(docs_to_process)} new docs")
+
+            # Map all current search result indices for index tracking completeness
+            all_indices = list(range(len(state.search_results)))
 
             return {
                 "claims": state.claims + new_claims,
-                "processed_result_indices": state.processed_result_indices + new_indices,
+                "processed_result_indices": all_indices,
                 "current_stage": "verifying",
                 "iterations": state.iterations + 1,
             }
@@ -169,11 +178,6 @@ class ClaimExtractionAgent:
             return data
 
         if isinstance(data, dict):
-            # format="json" makes small models wrap the array under an
-            # unpredictable key ("claims", "text", "items", or nested deeper)
-            # — a fixed whitelist keeps missing new keys the model invents.
-            # Instead, search the object's values for the first list whose
-            # items look like claim objects (dicts with a "text" field).
             found = ClaimExtractionAgent._find_claim_list(data)
             if found is not None:
                 return found
@@ -183,9 +187,6 @@ class ClaimExtractionAgent:
 
     @staticmethod
     def _find_claim_list(obj, depth: int = 0) -> Optional[List[dict]]:
-        """Recursively search a parsed JSON object for a list of claim-shaped
-        dicts (each having a 'text' key). Depth-limited to avoid pathological
-        nesting."""
         if depth > 3:
             return None
         if isinstance(obj, list):

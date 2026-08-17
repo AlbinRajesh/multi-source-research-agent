@@ -13,6 +13,17 @@ than adding a second classification step):
 
 Both modes share the same hard rules (no fabrication, citation-index
 integrity, current-date awareness) — only structure/length differs.
+
+NOTE: Neither mode writes its own References/Sources section. The
+authoritative citation list is built in code from doc.title/doc.url
+(see src/processing/citations.py -> format_citations), which the LLM
+never sees. Earlier versions asked the structured prompt to also
+hand-write a "## References" section; since the model was only ever
+given claim text (never titles/URLs), it had no real reference data
+to draw from and just echoed the claim text back under each [n],
+producing a duplicate, hallucinated reference list alongside the real
+one rendered from citations.py. That instruction has been removed —
+the LLM's job ends at the last content section.
 """
 
 # =============================================================================
@@ -94,7 +105,7 @@ assumptions for anything time-sensitive.
 
 ## Required structure — follow this exactly, do not collapse into one paragraph
 
-# {{Topic}}
+# {{{{Topic}}}}
 
 ## Executive Summary
 2-4 sentences giving the direct answer to the question. No citations needed
@@ -104,25 +115,27 @@ here if the detail is repeated with a citation below; this is an overview.
 One sentence per objective from the research plan, framed as what was
 investigated (not the answer itself).
 
-## {{Objective 1 title}}
+## {{{{Objective 1 title}}}}
 One or more paragraphs addressing this objective specifically, using only
 claims relevant to it. Inline [n] markers required. If no claims cover
 this objective, write one sentence saying so explicitly — do not omit
 the section.
 
-## {{Objective 2 title}}
+## {{{{Objective 2 title}}}}
 (same pattern — one section per objective, in the order given)
 
-## References
-Numbered list, [n] Source title/description — matching every marker used
-above. One entry per unique citation index, no duplicates, no unused
-entries.
+End the report after the last objective section. Do not add anything
+after it.
 
 ## What NOT to do
 - Do not write a single undifferentiated paragraph — every objective gets
   its own heading, even if the section is short.
 - Do not invent objective titles not implied by the research plan.
-- Do not skip the References section or leave citation numbers unmatched.
+- Do not write a "References" or "Sources" section, and do not repeat
+  the claim text under a citation number as if it were a source
+  description — the citation list is rendered separately, in code, from
+  the actual source titles/URLs, which you are not given and must not
+  guess at.
 - Do not cite a source index that isn't in the provided claims list."""
 
 
@@ -141,5 +154,7 @@ as fact):
 {unconfirmed_block}
 
 Write the full structured report now: Executive Summary, Research
-Objectives, one section per objective above, then References. Use [n]
-citation markers matching the indices given."""
+Objectives, then one section per objective above. Stop after the last
+objective section — do not add a References or Sources section, that
+is rendered separately. Use [n] citation markers matching the indices
+given."""

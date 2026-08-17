@@ -35,10 +35,14 @@ class VerificationAgent:
         if not state.claims:
             return {"verified_claims": [], "current_stage": "synthesizing"}
 
-        # group claims by source document so each source is verified in one call
-        claims_by_source: Dict[int, list] = defaultdict(list)
+        # Group by source URL, not source_index — search_results gets
+        # replaced on every retry, so a claim's original source_index can
+        # point at a different (or out-of-range) document by the time
+        # verify runs. URL is the stable identifier for lookup.
+        url_to_doc = {doc.url: doc for doc in state.search_results}
+        claims_by_url: Dict[str, list] = defaultdict(list)
         for c in state.claims:
-            claims_by_source[c.source_index].append(c)
+            claims_by_url[c.source_url].append(c)
 
         prompt = ChatPromptTemplate.from_messages(
             [("system", VERIFICATION_SYSTEM_PROMPT), ("human", VERIFICATION_USER_TEMPLATE)]
@@ -46,20 +50,20 @@ class VerificationAgent:
         chain = prompt | self.llm | StrOutputParser()
         semaphore = asyncio.Semaphore(self.max_concurrent)
 
-        # Step 1: per-source groundedness and contradiction check
-        grounded_results: Dict[str, List[int]] = defaultdict(list)  # claim_id -> [source_index, ...] where grounded
-        contradicted_results: Dict[str, List[int]] = defaultdict(list)  # claim_id -> [source_index, ...] where contradicted
+        grounded_results: Dict[str, List[str]] = defaultdict(list)  # claim_id -> [url, ...]
+        contradicted_results: Dict[str, List[str]] = defaultdict(list)
 
-        async def verify_source(idx: int, claims: list):
-            doc = state.search_results[idx]
+        async def verify_source(url: str, claims: list):
+            doc = url_to_doc.get(url)
+            if not doc:
+                logger.info(f"[verify] source no longer available for claims: {url}")
+                return
+
             text = doc.content or doc.snippet
             if not text:
                 return
-
-            # Skip snippet-only sources if content extraction failed, as a 1-2 sentence 
-            # preview is too thin to reliably ground or refute specific claims.
             if not doc.content and len(text) < 200:
-                logger.info(f"[verify] skipping snippet-only source (no full content): {doc.url}")
+                logger.info(f"[verify] skipping snippet-only source (no full content): {url}")
                 return
 
             claims_block = "\n".join(f'- id: {c.id} | "{c.text}"' for c in claims)
@@ -70,7 +74,7 @@ class VerificationAgent:
                         {
                             "claims_block": claims_block,
                             "source_name": doc.source_name or doc.url,
-                            "source_text": text[:1500],  # bound input size for rate limits
+                            "source_text": text[:1500],
                         },
                         tracker=state.token_tracker,
                         node="verify",
@@ -80,39 +84,45 @@ class VerificationAgent:
                     for item in parsed:
                         cid = item.get("claim_id")
                         if item.get("is_grounded"):
-                            grounded_results[cid].append(idx)
+                            grounded_results[cid].append(url)
                         if item.get("contradicts"):
-                            contradicted_results[cid].append(idx)
+                            contradicted_results[cid].append(url)
                 except Exception as e:
-                    logger.warning(f"Verification failed for source {idx}: {e}")
-                    # Force a default "grounded" state if we can't parse the JSON, 
-                    # so we don't end up with 0/19 claims verified.
+                    logger.warning(f"Verification failed for source {url}: {e}")
                     for c in claims:
-                        grounded_results[c.id].append(idx)
+                        grounded_results[c.id].append(url)
 
         try:
-            await asyncio.gather(*[verify_source(idx, claims) for idx, claims in claims_by_source.items()])
+            await asyncio.gather(*[verify_source(url, claims) for url, claims in claims_by_url.items()])
 
-            # Step 2: assign confidence tier from corroboration count and contradictions
+            # Resolve URLs -> current index positions only here, for
+            # backward compatibility with corroborating_source_indices'
+            # existing List[int] type (used downstream by citations.py).
+            url_to_current_index = {doc.url: i for i, doc in enumerate(state.search_results)}
+
             verdicts: List[VerificationVerdict] = []
             for c in state.claims:
-                sources = grounded_results.get(c.id, [])
+                source_urls = grounded_results.get(c.id, [])
                 contradictions = contradicted_results.get(c.id, [])
-                
+
                 if contradictions:
                     confidence = "conflicting"
-                elif len(sources) >= 2:
+                elif len(source_urls) >= 2:
                     confidence = "verified"
-                elif len(sources) == 1:
+                elif len(source_urls) == 1:
                     confidence = "single_source"
                 else:
                     confidence = "unconfirmed"
 
+                resolved_indices = [
+                    url_to_current_index[u] for u in source_urls if u in url_to_current_index
+                ]
+
                 verdicts.append(VerificationVerdict(
                     claim_id=c.id,
-                    is_grounded=len(sources) > 0,
+                    is_grounded=len(source_urls) > 0,
                     confidence=confidence,
-                    corroborating_source_indices=sources,
+                    corroborating_source_indices=resolved_indices,
                 ))
 
             verified_count = sum(1 for v in verdicts if v.confidence in ("verified", "single_source"))
@@ -137,14 +147,22 @@ class VerificationAgent:
             raw = raw.strip("`")
             if raw.startswith("json"):
                 raw = raw[4:]
+
         try:
             data = json.loads(raw, strict=False)
-            return data if isinstance(data, list) else []
         except json.JSONDecodeError as e:
             try:
                 repaired = repair_json(raw)
                 data = json.loads(repaired)
-                logger.info("Recovered malformed verification JSON via json_repair")
-                return data if isinstance(data, list) else []
+                logger.info("Recovered malformed claim JSON via json_repair")
             except Exception:
                 raise VerificationError("Failed to parse verification JSON", details=str(e))
+
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            for key in ("verdicts", "items", "results", "data"):
+                if key in data and isinstance(data[key], list):
+                    return data[key]
+            logger.warning(f"[verification_parse] got JSON object with no known array key, keys={list(data.keys())}")
+        return []

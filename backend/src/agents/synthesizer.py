@@ -26,6 +26,14 @@ SIMPLE_COMPLEXITY_TIERS = {"simple"}
 
 
 class SynthesizerAgent:
+    MIN_USABLE_CLAIMS = 2  # below this, evidence is too thin to synthesize
+    # a meaningful answer from — return an honest "insufficient evidence"
+    # response instead of forcing the LLM to produce prose from whatever
+    # scraps survived. This is a general safeguard, not tied to any
+    # particular topic — it fires whenever the pipeline's upstream stages
+    # (search/credibility/relevance/verify) collectively leave too little
+    # real evidence, for any subject.
+
     def __init__(self, llm=None):
         self.llm = llm or get_llm(temperature=0.3)
         self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")
@@ -37,6 +45,29 @@ class SynthesizerAgent:
                 v for v in state.verified_claims if v.confidence in ("verified", "single_source")
             ]
             unconfirmed = [v for v in state.verified_claims if v.confidence == "unconfirmed"]
+
+            # Low-evidence floor — fires for ANY topic where too few
+            # claims survived to verify/relevance/credibility filtering,
+            # not a subject-specific check.
+            if len(usable) < self.MIN_USABLE_CLAIMS:
+                logger.warning(
+                    f"[synthesis_floor] only {len(usable)} usable claim(s) survived "
+                    f"(min={self.MIN_USABLE_CLAIMS}) — returning insufficient-evidence response"
+                )
+                fallback_text = (
+                    f"I wasn't able to find enough verified information to answer "
+                    f"\"{state.research_topic}\" with confidence. "
+                )
+                if usable:
+                    claim = claim_by_id.get(usable[0].claim_id)
+                    if claim:
+                        fallback_text += f"The only verifiable detail found was: {claim.text}"
+                return {
+                    "final_report": fallback_text,
+                    "citations": [],
+                    "current_stage": "complete",
+                    "iterations": state.iterations + 1,
+                }
 
             citation_index_map = {}
             url_to_index = {}
@@ -67,10 +98,6 @@ class SynthesizerAgent:
 
             current_date = datetime.now(timezone.utc).strftime('%B %d, %Y')
 
-            # Complexity gate — defensive read, never crash on a missing
-            # or malformed plan. getattr with a safe default means a
-            # None plan, an old cached plan without the field, or an
-            # unexpected value all fall through to structured (safer).
             complexity = getattr(state.plan, "complexity", None) if state.plan else None
             use_simple = complexity in SIMPLE_COMPLEXITY_TIERS
 

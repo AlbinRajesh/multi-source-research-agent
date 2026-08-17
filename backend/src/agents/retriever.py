@@ -49,15 +49,33 @@ class RetrieverAgent:
             all_results = [r for sub in results_per_query for r in sub]
 
             all_results = await self.extractor.enhance_results(all_results)
+            
+            # Keep track of which URLs are brand new in this search/retry cycle
+            existing_urls = {r.url for r in state.search_results}
+            
             combined = dedup_results(state.search_results + all_results)
             filtered = self.scorer.filter_results(combined, min_score=config.min_credibility_score)
 
+            # Sort all filtered results by credibility score descending
             scored = sorted(filtered, key=lambda r: self.scorer.score_url(r.url)["score"], reverse=True)
-            filtered = scored[:config.max_docs_for_extraction]
+            
+            # Reserve slots for newly found results on retries so they aren't completely starved out by global top-N scoring
+            max_docs = config.max_docs_for_extraction
+            newly_discovered = [r for r in scored if r.url not in existing_urls]
+            older_scored = [r for r in scored if r.url in existing_urls]
+
+            # If we have newly discovered items, reserve up to a portion (e.g., at least 30% or min 2 slots) for them
+            reserved_slots = min(len(newly_discovered), max(2, int(max_docs * 0.3))) if newly_discovered else 0
+            top_new = newly_discovered[:reserved_slots]
+            
+            remaining_slots = max_docs - len(top_new)
+            # Fill the rest from the highest-scoring overall remaining items
+            remaining_pool = [r for r in scored if r not in top_new]
+            filtered = top_new + remaining_pool[:remaining_slots]
 
             credibility_scores = [self.scorer.score_url(r.url) for r in filtered]
 
-            logger.info(f"Retrieved {len(all_results)} -> {len(filtered)} after dedup+credibility (capped & accumulated)")
+            logger.info(f"Retrieved {len(all_results)} -> {len(filtered)} after dedup+credibility (capped & accumulated with retry reservation)")
 
             return {
                 "search_results": filtered,
