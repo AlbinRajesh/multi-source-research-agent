@@ -20,6 +20,19 @@ Note on Date Ranges:
   "over the last 5 years") should be rated at least "complex" even if
   it concerns a single entity — it needs temporal coverage across
   sub-periods, not topical breadth, and 2-3 queries can't achieve that.
+Note on Multi-Entity Comparisons:
+- For a question comparing two or more named entities (frameworks,
+  products, companies, technologies, etc.), do NOT generate combined
+  "X vs Y" queries — these return SEO comparison-blog content instead
+  of authoritative per-entity sources. Instead, generate at least one
+  query anchored to EACH entity individually for EACH angle being
+  compared (e.g. for "React vs Vue state management": "React state
+  management 2026" AND "Vue.js state management 2026" as separate
+  queries, not "React vs Vue state management"). If the query cap is
+  too small to cover every entity x angle combination individually,
+  prioritize entity-anchored queries over combined ones — a comparison
+  built from real per-entity sources is more valuable than fewer
+  queries that only reach generic comparison blogs.
 
 ## 3. Search queries (up to {max_queries})
 Cover different angles based on your complexity tier.

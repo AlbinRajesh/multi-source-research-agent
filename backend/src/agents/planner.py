@@ -24,14 +24,23 @@ SIMPLE_TOPIC_PATTERNS = [
     r"^what does .* mean\??$",
 ]
 
+COMPARISON_PATTERNS = [
+    r"\bvs\.?\b", r"\bversus\b", r"\bcompare\b", r"\bcomparison\b",
+    r"\bdifferences? between\b",
+]
+
 def _deterministic_tier_floor(topic: str) -> Optional[str]:
-    """Returns 'simple' if the topic clearly matches a basic lookup pattern and is short, else None."""
+    """Returns a forced complexity tier if the topic clearly matches a
+    pattern needing a specific tier, else None (defer to LLM judgment)."""
     normalized = topic.strip().lower()
     word_count = len(normalized.split())
     if word_count <= 8:
         for pattern in SIMPLE_TOPIC_PATTERNS:
             if re.match(pattern, normalized):
                 return "simple"
+    for pattern in COMPARISON_PATTERNS:
+        if re.search(pattern, normalized):
+            return "complex"
     return None
 
 

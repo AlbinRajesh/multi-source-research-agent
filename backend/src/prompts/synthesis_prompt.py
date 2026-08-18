@@ -110,6 +110,7 @@ assumptions for anything time-sensitive.
 - **Defend the Gaps:** If coverage is thin on a particular objective, state the limitation transparently without padding or hand-waving.
 
 ## Required structure — follow this exactly, do not collapse into one paragraph
+(Note: the markdown-table rule above takes precedence over prose/bullets for any section that is a direct item-vs-item comparison.)
 
 # {{{{Topic}}}}
 
@@ -120,7 +121,7 @@ A high-impact, 3-4 sentence synthesis providing the definitive answer and core t
 A brief, clean overview of the core pillars investigated in this research report.
 
 ## {{{{Objective 1 title}}}}
-Write fluid, professional prose addressing this objective. Use subheadings or clean bullet points if breaking down complex multi-faceted details (e.g., architectural shifts, timeline milestones, or market impacts). Ground every factual assertion with inline [n] markers. 
+Write fluid, professional prose addressing this objective. Use subheadings or clean bullet points if breaking down complex multi-faceted details (e.g., architectural shifts, timeline milestones, or market impacts) — EXCEPT when this objective is a direct comparison between two or more items on shared attributes, in which case follow the markdown-table rule above instead of prose/bullets. Ground every factual assertion with inline [n] markers.
 
 ## {{{{Objective 2 title}}}}
 (Follow the same rigorous analytical pattern for each objective in order)

@@ -41,9 +41,13 @@ class CredibilityScorer:
         'axios.com', 'fortune.com',
 
         # Company/official sources
+         # Company/official sources
         '.google', 'googleblog.com', 'newsroom.',
-    }
 
+        # Official framework/language docs
+        'react.dev', 'vuejs.org', 'angular.dev', 'developer.mozilla.org',
+        'docs.python.org', 'kubernetes.io', 'docker.com', 'nodejs.org',
+    }
     SUSPICIOUS_PATTERNS = [
         r'\.(xyz|tk|ml|ga|cf|gq)$',
         r'bit\.ly|tinyurl|t\.co',
@@ -62,7 +66,7 @@ class CredibilityScorer:
             domain = parsed.netloc.lower()
 
             # Graduated TLD signal
-            if domain.endswith(('.gov', '.edu', '.org', '.int','.net')):
+            if domain.endswith(('.gov', '.edu', '.int')):
                 score += 15
                 factors.append('Institutional TLD')
 
