@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 class VerificationAgent:
     def __init__(self, llm=None, max_concurrent: int = 4):
-        self.llm = llm or get_llm(temperature=0.0, max_tokens=600)  # strongest model, low temp — this stage matters most
+        self.llm = llm or get_llm(temperature=0.0, max_tokens=1500)  # strongest model, low temp — this stage matters most
         self.max_concurrent = max_concurrent
         self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")
 

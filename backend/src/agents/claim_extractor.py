@@ -46,7 +46,7 @@ class ClaimExtractionAgent:
             temperature=0.0,
             model_override=config.claim_extraction_model,
             provider_override="ollama",
-            max_tokens=1200,# bounds generation length -> bounds both latency and claim count
+            max_tokens=1200,
         )
         self.max_concurrent = max_concurrent
         self.model_name = config.claim_extraction_model

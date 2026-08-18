@@ -738,3 +738,14 @@ extract_claims	12.65–89.15	~40.5
 relevance_filter	0.43–13.48	~3.2
 verify	0.97–63.91	~24.5
 synthesize	1.73–58.97	~19.5
+--------------------------------------------------------------------------------------------------
+Total time this run:
+
+Stage	Time
+plan	2.08s
+search	6.74s
+extract_claims	25.85s
+relevance_filter	13.13s
+verify	1.76s
+synthesize	13.60s
+Total	~63.2s
