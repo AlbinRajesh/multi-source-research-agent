@@ -730,3 +730,11 @@ Confirm Tailwind is actually applying to CitationList.jsx (red-border test) — 
 Extract Claims stage speed (~48s avg bottleneck) — raise max_concurrent above 2, or restrict extraction more aggressively
 Reranker (cross-encoder) reloading/reinstantiating on every retry pass — redundant HF cache roundtrips on 4GB GPU
 content_extractor.py Tavily batch chunking — reviewed, confirmed already correct, no action needed
+---------------------------------------------------------------------------------------------------
+Stage	Range (s)	Avg (s)
+plan	1.07–5.98	~2.3
+search	3.72–13.42	~7.3
+extract_claims	12.65–89.15	~40.5
+relevance_filter	0.43–13.48	~3.2
+verify	0.97–63.91	~24.5
+synthesize	1.73–58.97	~19.5

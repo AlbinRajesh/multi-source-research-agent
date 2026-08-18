@@ -27,7 +27,7 @@ insurance — the verifier will still reject genuinely irrelevant ones,
 whereas the relevance filter dropping a correct claim is unrecoverable.
 """
 import logging
-from typing import List, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 import torch
 from sentence_transformers import CrossEncoder
 
@@ -49,22 +49,9 @@ def filter_by_relevance(
     topic: str,
     keep_ratio: float = 0.65,
     min_survivors: int = 5,
-    skip_below: int = 20,
+    global_budget: Optional[int] = None,
+    min_per_source: int = 1,
 ) -> Tuple[List, List[float]]:
-    """
-    claims: list of Claim objects (must have .text)
-    keep_ratio: fraction of the batch to keep, ranked by relevance score
-        (e.g. 0.65 = keep the top 65%). Robust to score-scale drift
-        since it's relative to the batch, not an absolute cutoff.
-    min_survivors: safety-net floor — if keep_ratio would leave fewer
-        than this many claims, keep this many instead (top-N by rank).
-        Prevents a batch collapsing to near-zero survivors, which
-        previously forced wasted retry cycles or empty synthesis.
-    Returns (kept_claims, all_scores) — all_scores is for distribution logging.
-    """
-    if len(claims) < skip_below:
-        logger.info(f"[relevance] skipped (n={len(claims)} < {skip_below}) — too few claims to safely rerank")
-        return claims, [0.0] * len(claims)
     if not claims:
         return [], []
 
@@ -72,25 +59,50 @@ def filter_by_relevance(
     pairs = [[topic, c.text] for c in claims]
     scores = model.predict(pairs).tolist()
 
-    # rank claims by score, descending
-    ranked = sorted(zip(claims, scores), key=lambda x: x[1], reverse=True)
+    # tie-break: nudge high-value claim types slightly when scores are close
+    TYPE_BOOST = {"stat": 0.15, "role": 0.15, "date": 0.1, "event": 0.05, "other": 0.0}
+    adjusted = [
+        (c, s, s + TYPE_BOOST.get(getattr(c, "claim_type", "other"), 0.0))
+        for c, s in zip(claims, scores)
+    ]
+    ranked = sorted(adjusted, key=lambda x: x[2], reverse=True)
 
     n = len(ranked)
     keep_count = max(min_survivors, round(n * keep_ratio))
-    keep_count = min(keep_count, n)  # never try to keep more than exist
+    keep_count = min(keep_count, n)
 
-    kept_pairs = ranked[:keep_count]
-    dropped_pairs = ranked[keep_count:]
+    kept = ranked[:keep_count]
+    dropped = ranked[keep_count:]
 
-    for claim, score in dropped_pairs:
-        logger.info(f"[relevance] dropped (score={score:.2f}, rank cutoff): {claim.text[:80]}")
+    # apply global budget on top of the ratio cut
+    if global_budget is not None and len(kept) > global_budget:
+        dropped = kept[global_budget:] + dropped
+        kept = kept[:global_budget]
 
-    kept = [c for c, _ in kept_pairs]
+    # per-source floor: don't let a strong source crowd out every other source entirely
+    kept_sources = {c.source_url for c, _, _ in kept}
+    all_sources = {c.source_url for c, _, _ in ranked}
+    missing_sources = all_sources - kept_sources
+
+    if missing_sources:
+        best_dropped_per_source = {}
+        for c, s, adj in dropped:
+            if c.source_url in missing_sources and c.source_url not in best_dropped_per_source:
+                best_dropped_per_source[c.source_url] = (c, s, adj)
+        rescued = list(best_dropped_per_source.values())
+        if rescued:
+            logger.info(f"[relevance] rescued {len(rescued)} claim(s) to satisfy per-source floor")
+            kept = kept + rescued
+
+    for claim, score, _ in dropped:
+        if claim not in [c for c, _, _ in kept]:
+            logger.info(f"[relevance] dropped (score={score:.2f}): {claim.text[:80]}")
+
+    kept_claims = [c for c, _, _ in kept]
     logger.info(
-        f"[relevance] kept {len(kept)}/{n} (keep_ratio={keep_ratio}, "
-        f"min_survivors={min_survivors}, score range kept: "
-        f"{kept_pairs[-1][1]:.2f} to {kept_pairs[0][1]:.2f})" if kept_pairs else
-        f"[relevance] kept 0/{n}"
+        f"[relevance] kept {len(kept_claims)}/{n} "
+        f"(keep_ratio={keep_ratio}, min_survivors={min_survivors}, "
+        f"global_budget={global_budget}, min_per_source={min_per_source})"
     )
 
-    return kept, scores
+    return kept_claims, scores

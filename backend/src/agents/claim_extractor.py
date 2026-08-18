@@ -24,7 +24,12 @@ logger = logging.getLogger(__name__)
 
 
 class ClaimExtractionAgent:
-    MAX_CLAIMS_PER_DOC = 6  # deterministic ceiling — do not rely on prompt compliance alone
+    # NOTE: this is a safety ceiling to bound parsing/latency cost per doc.
+    # It is intentionally generous — real selection happens in relevance_filter
+    # using the cross-encoder, which has an actual quality signal. Truncating
+    # here on model output order would throw away claims before that signal
+    # ever sees them.
+    MAX_CLAIMS_PER_DOC = config.claim_extraction_safety_cap  # uses config value (15)
 
     BOILERPLATE_PATTERNS = [
         r"^\[.*\]\(#.*\)",
@@ -41,7 +46,7 @@ class ClaimExtractionAgent:
             temperature=0.0,
             model_override=config.claim_extraction_model,
             provider_override="ollama",
-            max_tokens=600,  # bounds generation length -> bounds both latency and claim count
+            max_tokens=1200,# bounds generation length -> bounds both latency and claim count
         )
         self.max_concurrent = max_concurrent
         self.model_name = config.claim_extraction_model
@@ -75,7 +80,7 @@ class ClaimExtractionAgent:
         semaphore = asyncio.Semaphore(self.max_concurrent)
 
         async def extract_one(idx: int, doc) -> List[Claim]:
-            text = doc.content or doc.snippet
+            text = doc.content or doc.snippet or ""
             logger.info(f"[debug] {doc.url} content_len={len(text)} preview={text[:300]!r}")
             if not text:
                 return []
@@ -88,7 +93,7 @@ class ClaimExtractionAgent:
                             chain,
                             {
                                 "source_name": doc.source_name or doc.url,
-                                "document_text": text[:3000],
+                                "document_text": text[:8000],
                             },
                             tracker=state.token_tracker,
                             node="extract_claims",
@@ -114,20 +119,22 @@ class ClaimExtractionAgent:
                     # Filter boilerplate BEFORE capping, so the cap counts real claims, not junk
                     parsed = [item for item in parsed if not self._is_boilerplate(item.get("text", ""))]
 
-                    # HARD CAP — deterministic, independent of prompt compliance.
+                    # SAFETY CEILING — generous cap to prevent runaway docs, real selection happens globally.
                     if len(parsed) > self.MAX_CLAIMS_PER_DOC:
                         logger.info(
-                            f"[claim_cap] {doc.url}: model returned {len(parsed)} valid claims, "
-                            f"capping to {self.MAX_CLAIMS_PER_DOC}"
+                            f"[claim_safety_cap] {doc.url}: model returned {len(parsed)} valid claims, "
+                            f"capping to {self.MAX_CLAIMS_PER_DOC} (safety ceiling, not quality selection)"
                         )
                         parsed = parsed[: self.MAX_CLAIMS_PER_DOC]
 
+                    VALID_TYPES = {"stat", "date", "role", "event", "other"}    
                     return [
                         Claim(
                             id=str(uuid.uuid4())[:8],
                             text=item["text"],
                             source_url=doc.url,
                             source_index=idx,
+                            claim_type=item.get("type") if item.get("type") in VALID_TYPES else "other",
                         )
                         for item in parsed
                         if item.get("text")
@@ -180,10 +187,7 @@ class ClaimExtractionAgent:
             # Occasionally the model nests claims by category, returning
             # a list of lists instead of a flat array — flatten one level
             # before validating, and drop anything that isn't a proper
-            # {"text": ...} claim dict. Previously this returned `data`
-            # unchecked, so a nested list reached `item.get("text", "")`
-            # downstream and crashed with 'list' object has no attribute
-            # 'get', silently losing that whole document's claims.
+            # {"text": ...} claim dict.
             if data and all(isinstance(item, list) for item in data):
                 data = [item for sub in data for item in sub]
             return [item for item in data if isinstance(item, dict) and "text" in item]

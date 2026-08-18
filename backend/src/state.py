@@ -53,7 +53,9 @@ class Claim(BaseModel):
     text: str = Field(description="The atomic claim statement")
     source_url: str = Field(description="URL/id of the document this claim was extracted from")
     source_index: int = Field(description="Index into search_results this claim came from")
-
+    claim_type: Literal["stat", "date", "role", "event", "other"] = Field(
+        default="other", description="Self-reported category, used as a tie-breaker in relevance ranking"
+    )   
 
 class VerificationVerdict(BaseModel):
     claim_id: str
@@ -97,6 +99,7 @@ class ResearchState(BaseModel):
     # Search
     search_results: List[SearchResult] = Field(default_factory=list)
     credibility_scores: List[Dict] = Field(default_factory=list)
+    tried_queries: list = Field(default_factory=list)  # Added here
 
     # Added Workflow Tracking Fields
     processed_result_indices: List[int] = Field(default_factory=list)

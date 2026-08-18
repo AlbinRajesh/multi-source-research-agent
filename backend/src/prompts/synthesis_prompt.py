@@ -45,7 +45,12 @@ _SYNTHESIS_HARD_RULES = """## Hard rules
   language ("according to [n]...", "one source indicates...") rather than
   being stated as flatly as VERIFIED claims.
 - If the available claims are insufficient to answer the question at all,
-  say so plainly in one sentence — do not pad with speculation."""
+  say so plainly in one sentence — do not pad with speculation.
+- When the topic involves comparing two or more items/entities across shared
+  attributes (specs, features, timelines, pricing, etc.), use a markdown
+  table instead of prose paragraphs. Table headers = item names, rows =
+  attributes. Still include [n] citation markers inside table cells where
+  applicable."""
 
 
 # =============================================================================

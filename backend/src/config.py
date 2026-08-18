@@ -35,9 +35,14 @@ class Settings(BaseSettings):
     min_claims_verified_ratio: float = 0.6  # trigger retry loop if below this
     max_retries: int = 2
 
+    # Claim extraction — safety ceiling on LLM parsing/latency, NOT a quality-selection cap.
+    claim_extraction_safety_cap: int = 15
 
-    relevance_keep_ratio: float = 0.60   # keep top 50% of each batch by relevance rank
-    relevance_min_survivors: int = 5   # safety floor — never drop below this many claims
+    # Relevance / selection — real claim selection happens here using the cross-encoder score across the FULL pool.
+    relevance_keep_ratio: float = 0.60
+    relevance_min_survivors: int = 5
+    relevance_global_budget: int = 25       # total claims allowed through, across all sources combined
+    relevance_min_per_source: int = 1       # guaranteed floor of claims per source
  
     # Report
     max_report_sections: int = 8
@@ -46,7 +51,7 @@ class Settings(BaseSettings):
     # Local RAG (Phase 2)
     local_rag_enabled: bool = False
 
-    #Port
+    # Port
     port: int = 8001
 
     class Config:

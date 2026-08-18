@@ -36,7 +36,7 @@ class SynthesizerAgent:
     # real evidence, for any subject.
 
     def __init__(self, llm=None):
-        self.llm = llm or get_llm(temperature=0.3)
+        self.llm = llm or get_llm(temperature=0.3, max_tokens=2000)
         self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")
 
     async def synthesize(self, state: ResearchState) -> Dict[str, Any]:
@@ -132,13 +132,16 @@ class SynthesizerAgent:
             chain = prompt | self.llm | StrOutputParser()
 
             answer = await track_llm_call(
-            chain,
-            input_vars,
-            tracker=getattr(state, "token_tracker", None),
-            node="synthesize",
-            model=self.model_name,
-            provider=config.model_provider,
-        )
+                chain,
+                input_vars,
+                tracker=getattr(state, "token_tracker", None),
+                node="synthesize",
+                model=self.model_name,
+                provider=config.model_provider,
+            )
+
+            # Added debug log here to inspect the raw LLM output
+            logger.info(f"[debug] synth answer len={len(answer)} preview={answer[:200]!r}")
 
             citations = format_citations(
                 usable, claim_by_id, citation_index_map, state.search_results, style="apa"

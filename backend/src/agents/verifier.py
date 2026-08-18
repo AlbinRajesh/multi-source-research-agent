@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 
 class VerificationAgent:
-    def __init__(self, llm=None, max_concurrent: int = 2):
-        self.llm = llm or get_llm(temperature=0.0)  # strongest model, low temp — this stage matters most
+    def __init__(self, llm=None, max_concurrent: int = 4):
+        self.llm = llm or get_llm(temperature=0.0, max_tokens=600)  # strongest model, low temp — this stage matters most
         self.max_concurrent = max_concurrent
         self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")
 
@@ -68,7 +68,7 @@ class VerificationAgent:
                 return
 
             claims_block = "\n".join(f'- id: {c.id} | "{c.text}"' for c in claims)
-            logger.info(f"[debug] {url} content_len={len(text)} truncated={len(text)>1500}")  # ADD
+            logger.info(f"[debug] {url} content_len={len(text)} truncated={len(text) > 6000}")
             async with semaphore:
                 try:
                     raw = await track_llm_call(
@@ -88,14 +88,12 @@ class VerificationAgent:
                         cid = item.get("claim_id")
                         if item.get("is_grounded"):
                             grounded_results[cid].append(url)
+                        else:
+                            logger.info(f"[debug] UNGROUNDED claim_id={cid} content_len={len(text)}")
                         if item.get("contradicts"):
                             contradicted_results[cid].append(url)
-                        else:
-                            logger.info(f"[debug] UNGROUNDED claim_id={cid} content_len={len(text)}")  # ADD
                 except Exception as e:
                     logger.warning(f"Verification failed for source {url}: {e}")
-                    for c in claims:
-                        grounded_results[c.id].append(url)
 
         try:
             await asyncio.gather(*[verify_source(url, claims) for url, claims in claims_by_url.items()])
@@ -178,11 +176,16 @@ class VerificationAgent:
         if len(text) <= max_total:
             return text
         spans = []
+        text_lower = text.lower()
         for c in claims:
-            words = c.text.split()
+            words = [w.strip('.,;:()"\'') for w in c.text.split()]
+            words = [w for w in words if len(w) > 2]
             if not words:
                 continue
-            idx = text.lower().find(words[0].lower())
+            # anchor on the longest word — more distinctive than the first word,
+            # less likely to match a generic early mention
+            anchor = max(words, key=len)
+            idx = text_lower.find(anchor.lower())
             if idx != -1:
                 spans.append((max(0, idx - 200), min(len(text), idx + window)))
         if not spans:

@@ -34,20 +34,13 @@ class CredibilityScorer:
         # International orgs
         'who.int', 'un.org', 'worldbank.org',
 
-        # Business / general-interest press — added: were incorrectly
-        # scoring as "standard unverified" despite being major
-        # mainstream outlets, causing well-known/legitimate sources to
-        # be filtered on ordinary queries (e.g. Forbes, Business Insider,
-        # Yahoo Finance all scored 30 and were dropped on a basic
-        # "who is X" biography lookup)
+        # Business / general-interest press
         'forbes.com', 'businessinsider.com', 'finance.yahoo.com',
         'yahoo.com', 'cnbc.com', 'techcrunch.com', 'theverge.com',
         'wired.com', 'time.com', 'usatoday.com', 'apnews.com',
         'axios.com', 'fortune.com',
 
-        # Company/official sources — a company's own blog/newsroom is a
-        # primary source for facts about that company (e.g. blog.google
-        # for Google/Alphabet leadership facts)
+        # Company/official sources
         '.google', 'googleblog.com', 'newsroom.',
     }
 
@@ -61,16 +54,22 @@ class CredibilityScorer:
         if not url:
             return {'score': 0, 'factors': ['No URL'], 'level': 'low'}
 
-        score = 25
+        score = 30  # Base score
         factors = []
 
         try:
             parsed = urlparse(url)
             domain = parsed.netloc.lower()
 
+            # Graduated TLD signal
+            if domain.endswith(('.gov', '.edu', '.org', '.int','.net')):
+                score += 15
+                factors.append('Institutional TLD')
+
+            # Known trusted list signal (extra boost on top of TLD/base)
             for trusted in self.TRUSTED_DOMAINS:
                 if trusted in domain:
-                    score += 40
+                    score += 25
                     factors.append(f'Trusted domain: {trusted}')
                     break
 

@@ -26,9 +26,13 @@ CLAIM_EXTRACTION_SYSTEM_PROMPT = """You extract atomic, independently checkable 
   inferred detail the text doesn't explicitly say
 
 ## Output format
-Return a JSON array of objects: {{"text": "<atomic claim>"}}
+Return a JSON array of objects: {{"text": "<atomic claim>", "type": "<stat|date|role|event|other>"}}
+- stat: contains a number, statistic, or quantitative data
+- date: states a date or timeframe
+- role: states a person's role, title, or position
+- event: describes a specific event
+- other: anything else that's still a valid checkable claim
 Return ONLY the JSON array, no preamble or commentary."""
-
 
 CLAIM_EXTRACTION_USER_TEMPLATE = """Source document (from: {source_name}):
 

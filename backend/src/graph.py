@@ -139,6 +139,8 @@ async def relevance_filter(state: ResearchState) -> dict:
         state.research_topic,
         keep_ratio=config.relevance_keep_ratio,
         min_survivors=config.relevance_min_survivors,
+        global_budget=config.relevance_global_budget,
+        min_per_source=config.relevance_min_per_source,
     )
 
     if scores:
@@ -238,12 +240,13 @@ def check_retry(state: ResearchState) -> dict:
 
 async def refine_search_queries(state: ResearchState) -> dict:
     weak_texts = state.weak_claims_to_resolve or []
+    already_tried = set(state.tried_queries or [])
 
     seen = set()
     deduped = []
     for q in weak_texts:
         q = q[:200]
-        if q not in seen:
+        if q not in seen and q not in already_tried:
             seen.add(q)
             deduped.append(q)
 
@@ -270,7 +273,11 @@ async def refine_search_queries(state: ResearchState) -> dict:
             for q in deduped
         ]
     })
-    return {"plan": updated_plan, "route_decision": "search"}
+    return {
+        "plan": updated_plan,
+        "route_decision": "search",
+        "tried_queries": list(already_tried | seen),
+    }
 
 
 # =============================================================================
