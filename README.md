@@ -1,9 +1,3 @@
-Reading the project's search provider file to include accurate provider details (name, usage, and configuration) in the README. I'll open the backend provider file mentioned.
-
-Read 
-Completed with input: {
-  "path": "d:\\ngxp_internship\\multi_source_researcher\\backend\\src\\search_providers\\tavily_provider.py"
-}
 
 # multi-source-researcher
 
