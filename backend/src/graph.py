@@ -11,6 +11,7 @@ SqliteSaver checkpointing + conditional routing), extended with:
 import uuid
 import logging
 from metrics.token_counter import TokenTracker
+from src.agents.router import RouterAgent
 from pathlib import Path
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
@@ -75,6 +76,7 @@ async def create_sqlite_checkpointer():
 # =============================================================================
 
 def create_research_graph(checkpointer=None):
+    router = RouterAgent()
     planner = PlannerAgent()
     retriever = RetrieverAgent()
     claim_extractor = ClaimExtractionAgent()
@@ -83,6 +85,7 @@ def create_research_graph(checkpointer=None):
 
     workflow = StateGraph(ResearchState)
 
+    workflow.add_node("route", timed_node("route")(router.route))
     workflow.add_node("plan", timed_node("plan")(planner.plan))
     workflow.add_node("search", timed_node("search")(retriever.search))
     workflow.add_node("extract_claims", timed_node("extract_claims")(claim_extractor.extract))
@@ -92,7 +95,10 @@ def create_research_graph(checkpointer=None):
     workflow.add_node("refine_search", timed_node("refine_search")(refine_search_queries))
     workflow.add_node("synthesize", timed_node("synthesize")(synthesizer.synthesize))
 
-    workflow.add_edge(START, "plan")
+    workflow.add_edge(START, "route")
+
+    def after_route(state: ResearchState) -> str:
+        return END if state.is_casual else "plan"
 
     def after_plan(state: ResearchState) -> str:
         if state.error or not state.plan or not state.plan.search_queries:
@@ -106,6 +112,7 @@ def create_research_graph(checkpointer=None):
             return END
         return "extract_claims"
 
+    workflow.add_conditional_edges("route", after_route, {"plan": "plan", END: END})
     workflow.add_conditional_edges("plan", after_plan, {"search": "search", END: END})
     workflow.add_conditional_edges("search", after_search, {"extract_claims": "extract_claims", END: END})
     workflow.add_conditional_edges("extract_claims", after_extract_claims, {"relevance_filter": "relevance_filter", "synthesize": "synthesize"})
@@ -124,7 +131,6 @@ def create_research_graph(checkpointer=None):
     workflow.add_edge("synthesize", END)
 
     return workflow.compile(checkpointer=checkpointer)
-
 
 # =============================================================================
 # Relevance Filter Node & Routing Edges
@@ -292,14 +298,8 @@ async def run_research(
 ) -> Dict[str, Any]:
     logger.info(f"Starting research on: {topic}")
 
-    initial_state = ResearchState(
-        research_topic=topic,
-        sources_available=sources_available or ["web"],
-        token_tracker=TokenTracker(),
-    )
-
-    run_config: Dict[str, Any] = {}
     checkpointer = None
+    run_config: Dict[str, Any] = {}
     if use_checkpoints:
         checkpointer = MemorySaver()
         tid = thread_id or f"research-{uuid.uuid4().hex[:8]}"
@@ -307,6 +307,20 @@ async def run_research(
         logger.info(f"thread_id: {tid}")
 
     graph = create_research_graph(checkpointer=checkpointer)
+
+    # Resume prior turns if this thread already has state
+    prior_history = []
+    if use_checkpoints and thread_id:
+        existing = await graph.aget_state(run_config)
+        if existing and existing.values:
+            prior_history = existing.values.get("conversation_history", [])
+
+    initial_state = ResearchState(
+        research_topic=topic,
+        sources_available=sources_available or ["web"],
+        token_tracker=TokenTracker(),
+        conversation_history=prior_history + [{"role": "user", "content": topic}],
+    )
 
     try:
         final_state = await graph.ainvoke(initial_state, config=run_config or None)
@@ -334,7 +348,6 @@ async def run_research(
         raise
 
     return final_state
-
 
 async def run_research_with_persistence(topic: str, thread_id: Optional[str] = None) -> Dict[str, Any]:
     """SQLite-persisted version — survives process restarts."""

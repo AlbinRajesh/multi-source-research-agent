@@ -1,3 +1,9 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap');
+
+/* Tailwind directives or other global styles come AFTER */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 .counter {
   font-size: 16px;
   padding: 5px 10px;

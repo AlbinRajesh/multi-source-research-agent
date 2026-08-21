@@ -89,12 +89,14 @@ class ReportSection(BaseModel):
 class ResearchState(BaseModel):
     # Input
     research_topic: str
-
+    conversation_history: List[Dict[str, str]] = Field(default_factory=list)  # [{"role": "user"/"assistant", "content": "..."}]
     # Sources available this run (Phase 1: web only; Phase 2 adds "local")
     sources_available: List[Literal["web", "local"]] = Field(default_factory=lambda: ["web"])
 
     # Planning
     plan: Optional[ResearchPlan] = Field(default=None)
+
+    is_casual: bool = Field(default=False)
 
     # Search
     search_results: List[SearchResult] = Field(default_factory=list)

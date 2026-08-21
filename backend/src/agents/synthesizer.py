@@ -93,6 +93,8 @@ class SynthesizerAgent:
                 tag = "VERIFIED" if v.confidence == "verified" else "single-source"
                 claims_lines.append(f'[{cite_idx}] ({tag}) {claim.text}')
 
+            logger.info(f"[debug] usable={len(usable)} claims_lines={len(claims_lines)} skipped={len(usable)-len(claims_lines)}")
+
             unconfirmed_lines = [
                 f'- {claim_by_id[v.claim_id].text}' for v in unconfirmed if v.claim_id in claim_by_id
             ][:10]

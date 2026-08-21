@@ -32,6 +32,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Persistent checkpointer and compiled graph instance across requests
+_checkpointer = MemorySaver()
+_graph = create_research_graph(checkpointer=_checkpointer)
+
 
 # 3. Request/response models
 class ResearchRequest(BaseModel):
@@ -63,14 +67,20 @@ async def research_resume(req: ResumeRequest):
 
 @app.post("/research/stream")
 async def research_stream(req: ResearchRequest):
+    tid = req.thread_id or f"research-{uuid.uuid4().hex[:8]}"
+    run_config = {"configurable": {"thread_id": tid}}
+
+    prior_history = []
+    existing = await _graph.aget_state(run_config)
+    if existing and existing.values:
+        prior_history = existing.values.get("conversation_history", [])
+
     initial_state = ResearchState(
         research_topic=req.topic,
         sources_available=req.sources or ["web"],
+        conversation_history=prior_history + [{"role": "user", "content": req.topic}],
     )
-    checkpointer = MemorySaver()
-    graph = create_research_graph(checkpointer=checkpointer)
-    tid = req.thread_id or f"research-{uuid.uuid4().hex[:8]}"
-    run_config = {"configurable": {"thread_id": tid}}
+    graph = _graph
 
     async def event_generator() -> AsyncGenerator[dict, None]:
         try:
@@ -87,8 +97,16 @@ async def research_stream(req: ResearchRequest):
 
     return EventSourceResponse(event_generator())
 
-
 def _summarize(node_name: str, output: dict) -> dict:
+    if node_name == "route":
+        if output.get("is_casual"):
+            return {
+                "node": "route",
+                "is_casual": True,
+                "final_report": output.get("final_report", ""),
+                "citations": [],
+            }
+        return {"node": "route", "is_casual": False}
     if node_name == "plan":
         plan = output.get("plan")
         return {
@@ -117,8 +135,7 @@ def _summarize(node_name: str, output: dict) -> dict:
             "final_report": output.get("final_report", ""),
             "citations": output.get("citations", []),
         }
-    return {"node": node_name}  
-
+    return {"node": node_name}
 
 if __name__ == "__main__":
     import uvicorn

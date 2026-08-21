@@ -8,7 +8,7 @@ can't retrieve, so a single provider outage doesn't drop sources entirely.
 import re
 import asyncio
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict
 from urllib.parse import urlparse
 
 import httpx
@@ -37,7 +37,7 @@ class ContentExtractor:
         '[role="navigation"]', '[role="complementary"]',
     ]
 
-    # Blocklist for non-article / social / video sites that yield poor text-scraping content
+    # Blocklist for non-article / social / video sites
     BLOCKED_DOMAINS = {
         "youtube.com", "m.youtube.com", "youtu.be",
         "linkedin.com", "m.linkedin.com",
@@ -45,12 +45,22 @@ class ContentExtractor:
         "facebook.com", "instagram.com", "reddit.com", "tiktok.com"
     }
 
+    _NAV_LINE_RE = re.compile(
+        r'^\s*(\*\s*\[|Jump to content|Main menu|move to sidebar|Navigation$)',
+        re.IGNORECASE,
+    )
+
     def __init__(self, timeout: int = 15, max_content_length: int = 8000):
         self.timeout = timeout
         self.max_content_length = max_content_length
         self.client_manager = HTTPClientManager.get_instance()
         self._breakers: dict = {}
         self._tavily = TavilyClient(api_key=config.tavily_api_key) if config.tavily_api_key else None
+
+    def _strip_nav_noise(self, text: str) -> str:
+        lines = text.split("\n")
+        cleaned = [ln for ln in lines if not self._NAV_LINE_RE.match(ln)]
+        return "\n".join(cleaned)
 
     def _is_blocked(self, url: str) -> bool:
         try:
@@ -67,16 +77,13 @@ class ContentExtractor:
             )
         return self._breakers[domain]
 
-    async def extract_via_tavily_batch(self, urls: List[str]) -> dict[str, Optional[str]]:
-        """Batch-extract multiple URLs in chunks of 20 (Tavily API limit).
-        Returns {url: content or None}."""
+    async def extract_via_tavily_batch(self, urls: List[str]) -> Dict[str, Optional[str]]:
         valid_urls = [u for u in urls if not self._is_blocked(u)]
         if not self._tavily or not valid_urls:
             return {u: None for u in urls}
 
-        results: dict[str, Optional[str]] = {u: None for u in urls}
+        results: Dict[str, Optional[str]] = {u: None for u in urls}
         
-        # Chunk URLs into groups of 20 to respect Tavily's hard limit per request
         chunk_size = 20
         url_chunks = [valid_urls[i:i + chunk_size] for i in range(0, len(valid_urls), chunk_size)]
 
@@ -86,19 +93,17 @@ class ContentExtractor:
                 for item in response.get("results", []):
                     content = item.get("raw_content")
                     if content:
+                        content = self._strip_nav_noise(content)
                         results[item["url"]] = content[: self.max_content_length]
                 for failed in response.get("failed_results", []):
                     logger.warning(f"Tavily Extract failed for {failed.get('url')}: {failed.get('error')}")
             except Exception as e:
                 logger.warning(f"Tavily Extract chunk call failed for {len(chunk)} URLs: {e}")
 
-        # Run chunk requests concurrently
         await asyncio.gather(*(fetch_chunk(chunk) for chunk in url_chunks))
-
         return results
 
     async def extract_content_async(self, url: str) -> Optional[str]:
-        """Fallback single-URL path — direct httpx + BeautifulSoup."""
         if self._is_blocked(url) or not is_valid_url(url):
             logger.warning(f"Blocked or unsafe URL, skipping: {url}")
             return None
@@ -115,21 +120,12 @@ class ContentExtractor:
 
             content_type = response.headers.get("content-type", "").lower()
             if not any(ct in content_type for ct in ["text/html", "application/xhtml"]):
-                logger.debug(f"Unsupported content-type for {url}: {content_type}")
                 return None
 
             extracted = self._parse_html(response.text)
             breaker.record_success()
             return extracted
 
-        except httpx.HTTPStatusError as e:
-            breaker.record_failure()
-            logger.warning(f"HTTP {e.response.status_code} fetching {url}")
-            return None
-        except httpx.TimeoutException:
-            breaker.record_failure()
-            logger.warning(f"Timeout fetching {url}")
-            return None
         except Exception as e:
             breaker.record_failure()
             logger.warning(f"Failed to extract {url}: {e}")
@@ -137,7 +133,6 @@ class ContentExtractor:
 
     def _parse_html(self, html: str) -> Optional[str]:
         soup = BeautifulSoup(html, "html.parser")
-
         for selector in self.REMOVE_SELECTORS:
             for el in soup.select(selector):
                 el.decompose()
@@ -158,8 +153,6 @@ class ContentExtractor:
         return text[: self.max_content_length]
 
     async def enhance_results(self, results: List[SearchResult], max_concurrent: int = 5) -> List[SearchResult]:
-        """Filter out blocked URLs and fill in `.content` for valid results."""
-        # Pre-filter blocklisted items entirely so they don't consume compute/extraction slots
         filtered_results = []
         for r in results:
             if self._is_blocked(r.url):
@@ -198,12 +191,9 @@ class ContentExtractor:
 
             await asyncio.gather(*[enhance_one(r) for r in fallback_targets])
 
-        # Visibility logging: track how many documents got full text vs snippet fallback
         with_content = sum(1 for r in filtered_results if r.content)
-        without_content = len(filtered_results) - with_content
         logger.info(
             f"[content_extraction] {with_content}/{len(filtered_results)} results have full "
-            f"content; {without_content} will fall back to snippet-only"
+            f"content; {len(filtered_results) - with_content} will fall back to snippet-only"
         )
-
         return filtered_results
