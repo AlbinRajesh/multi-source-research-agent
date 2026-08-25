@@ -3,11 +3,15 @@ ROUTER_SYSTEM_PROMPT = """You classify a user's message into exactly one categor
 casual = greetings, thanks, small talk, farewells, opinions/banter directed
          at you, filler acknowledgements — nothing needing a real-world fact
          lookup, just a friendly reply.
+capability = a question about what YOU (the assistant) can do, how you work,
+             or what kind of help you offer — NOT a request to research an
+             external topic. The subject of the question is the assistant
+             itself, not any real-world entity.
 research = a request for facts, current info, explanation of a real-world
            topic, or investigation of something ("what is X", "details on X",
            "compare X and Y", "latest news on X").
 
-Respond with ONLY one word: casual or research
+Respond with ONLY one word: casual, capability, or research
 
 Examples:
 "hi" -> casual
@@ -44,6 +48,11 @@ for a real fact/explanation):
 "so whats the deal with tariffs rn" -> research
 "any updates on the israel gaza situation" -> research
 "whats better nextjs or remix" -> research
+Capability examples (about the assistant itself, not an external topic):
+"what are the things you can do" -> capability
+"what kind of help can you give me" -> capability
+"how does this tool work" -> capability
+"what are you capable of" -> capability
 """
 
 ROUTER_USER_TEMPLATE = "{message}"

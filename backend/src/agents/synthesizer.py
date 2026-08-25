@@ -36,9 +36,15 @@ class SynthesizerAgent:
     # real evidence, for any subject.
 
     def __init__(self, llm=None):
+        # Two separate instances: simple mode's prompt is short (1-4 sentence
+        # answer, few claims) and fits comfortably in a small budget. Structured
+        # mode's prompt is much longer and the model is a reasoning model —
+        # hidden reasoning tokens draw from the same max_tokens budget as the
+        # visible answer, so a tight ceiling here silently truncates the
+        # completion to nothing before any output text is written.
         self.llm = llm or get_llm(temperature=0.3, max_tokens=2000)
+        self.structured_llm = llm or get_llm(temperature=0.3, max_tokens=8000)
         self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")
-
     async def synthesize(self, state: ResearchState) -> Dict[str, Any]:
         try:
             claim_by_id = {c.id: c for c in state.claims}
@@ -102,7 +108,7 @@ class SynthesizerAgent:
             current_date = datetime.now(timezone.utc).strftime('%B %d, %Y')
 
             complexity = getattr(state.plan, "complexity", None) if state.plan else None
-            use_simple = complexity in SIMPLE_COMPLEXITY_TIERS
+            use_simple = complexity in SIMPLE_COMPLEXITY_TIERS or state.force_simple_format
 
             if use_simple:
                 logger.info(f"[synthesis_mode] complexity='{complexity}' -> simple direct-answer format")
@@ -131,7 +137,8 @@ class SynthesizerAgent:
             prompt = ChatPromptTemplate.from_messages(
                 [("system", system_prompt), ("human", user_template)]
             )
-            chain = prompt | self.llm | StrOutputParser()
+            active_llm = self.structured_llm if not use_simple else self.llm
+            chain = prompt | active_llm | StrOutputParser()
 
             answer = await track_llm_call(
                 chain,
@@ -142,8 +149,23 @@ class SynthesizerAgent:
                 provider=config.model_provider,
             )
 
-            # Added debug log here to inspect the raw LLM output
+                        # Added debug log here to inspect the raw LLM output
             logger.info(f"[debug] synth answer len={len(answer)} preview={answer[:200]!r}")
+
+            if not answer or not answer.strip():
+                logger.error(
+                    f"[synthesis_empty] LLM returned empty completion "
+                    f"(mode={'simple' if use_simple else 'structured'}, "
+                    f"claims={len(claims_lines)}) — surfacing as error instead "
+                    f"of an empty report"
+                )
+                return {
+                    "error": (
+                        "The research completed but the answer generation step "
+                        "returned empty — this usually means the response was cut "
+                        "off. Please try again."
+                    )
+                }
 
             citations = format_citations(
                 usable, claim_by_id, citation_index_map, state.search_results, style="apa"

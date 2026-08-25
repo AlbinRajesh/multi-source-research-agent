@@ -56,6 +56,10 @@ export function useResearchStream() {
             patchSession(session.id, (s) => {
               const nodeLog = [...s.nodeLog, data];
 
+              if (data.error) {
+                return { nodeLog, error: data.error, status: "error" };
+              }
+
               if (data.node === "route" && data.is_casual) {
                 return {
                   nodeLog,

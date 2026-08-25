@@ -115,12 +115,18 @@ class RetrieverAgent:
 
             logger.info(f"Retrieved {len(all_results)} -> {len(filtered)} after dedup+credibility (capped & accumulated with retry reservation)")
 
-            return {
+            result = {
                 "search_results": filtered,
                 "credibility_scores": credibility_scores,
                 "current_stage": "extracting_claims",
                 "iterations": state.iterations + 1,
             }
+            if not filtered:
+                result["error"] = (
+                    f"Found {len(all_results)} results but none met the credibility "
+                    f"threshold for this topic."
+                )
+            return result
 
         except Exception as e:
             logger.error(f"Search failed: {e}")

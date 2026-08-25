@@ -30,6 +30,9 @@ CAPABILITY_PATTERNS = [
     r"\bwho are you\b",
     r"\bwhat is this (tool|app|assistant|agent)\b",
     r"\bwhat (kind of|type of) (questions|topics) can\b",
+    r"\bwhat (kind of |type of )?(things|stuff|help) (can|could) you (do|offer|help with)\b",
+    r"\bwhat can you help (me )?with\b",
+    r"\bwhat (are you|are you all) capable of\b",
 ]
 
 GREETING_PATTERNS = [
@@ -98,6 +101,10 @@ class RouterAgent:
         except Exception as e:
             logger.warning(f"Router classification failed, defaulting to research: {e}")
             label = "research"
+
+        if "capability" in label:
+            logger.info(f"[router] LLM classifier -> capability: {topic!r}")
+            return self._casual_result(CAPABILITY_ANSWER)
 
         if "casual" in label:
             reply = await self._casual_reply(topic)

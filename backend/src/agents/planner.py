@@ -43,6 +43,26 @@ def _deterministic_tier_floor(topic: str) -> Optional[str]:
             return "complex"
     return None
 
+FORMAT_CONSTRAINT_PATTERNS = [
+    r"\bin (one|two|three|\d+)\s+sentences?\b",
+    r"\bin (one|a )?(short|brief)\b",
+    r"\bbriefly\b",
+    r"\bkeep it short\b",
+    r"\bshort answer\b",
+    r"\bin \d+ words?\b",
+    r"\bone[- ]liner\b",
+]
+
+def _has_explicit_format_constraint(topic: str) -> bool:
+    normalized = topic.strip().lower()
+    return any(re.search(p, normalized) for p in FORMAT_CONSTRAINT_PATTERNS)
+ 
+def _recent_conversation_context(history: list, max_turns: int = 3) -> str:
+    if not history:
+        return "(none)"
+    recent = history[-max_turns:]
+    lines = [f"{turn.get('role', 'user')}: {turn.get('content', '')}" for turn in recent]
+    return "\n".join(lines)
 
 class PlannerAgent:
     def __init__(self, llm=None, max_retries: int = 3):
@@ -53,7 +73,7 @@ class PlannerAgent:
     async def plan(self, state: ResearchState) -> Dict[str, Any]:
         local_available = "local" in state.sources_available
         local_note = (
-            "Local documents ARE available this run — route document-specific queries to 'local'."
+            "Local documents ARE  available this run — route document-specific queries to 'local'."
             if local_available
             else "No local documents available this run — use 'web' for all queries."
         )
@@ -71,7 +91,11 @@ class PlannerAgent:
                 chain = prompt | self.llm | JsonOutputParser()
                 result = await track_llm_call(
                     chain,
-                    {"topic": state.research_topic, "local_docs_available": local_available},
+                    {
+                        "topic": state.research_topic,
+                        "local_docs_available": local_available,
+                        "conversation_context": _recent_conversation_context(state.conversation_history),
+                    },
                     tracker=state.token_tracker,
                     node="plan",
                     model=self.model_name,
@@ -119,7 +143,12 @@ class PlannerAgent:
                     complexity=complexity,
                 )
 
-                return {"plan": plan, "current_stage": "searching", "iterations": state.iterations + 1}
+                return {
+                    "plan": plan,
+                    "current_stage": "searching",
+                    "iterations": state.iterations + 1,
+                    "force_simple_format": _has_explicit_format_constraint(state.research_topic),
+                }
 
             except Exception as e:
                 logger.warning(f"Planning attempt {attempt + 1} failed: {e}")

@@ -107,26 +107,36 @@ assumptions for anything time-sensitive.
 - **Weave, Don't List:** Synthesize claims together into cohesive analytical narratives. Do not write a string of isolated sentences that each end with a citation; instead, combine related evidence to support deeper analytical points.
 - **Surface Nuance & Tension:** If sources present different angles, trade-offs, or timelines, highlight them clearly. 
 - **Zero Fluff:** Avoid generic AI filler phrases ("In conclusion", "It is important to note", "In today's fast-paced world"). Be direct, dense with facts, and authoritative.
-- **Defend the Gaps:** If coverage is thin on a particular objective, state the limitation transparently without padding or hand-waving.
+- **Handle Gaps Silently:** If coverage is thin on a particular angle, simply don't write a section for it — do not narrate what's missing to the reader.
 
 ## Required structure — follow this exactly, do not collapse into one paragraph
 (Note: the markdown-table rule above takes precedence over prose/bullets for any section that is a direct item-vs-item comparison.)
 
+Write a natural reader-facing explainer, NOT an internal research report.
+Never use section titles like "Executive Summary," "Research Objectives,"
+or "Objective 1/2/3" — those are internal planning labels, not headings a
+reader should ever see. Instead, structure the answer as:
+
 # {{{{Topic}}}}
 
-## Executive Summary
-A high-impact, 3-4 sentence synthesis providing the definitive answer and core takeaway. Think of this as the bottom-line up front (BLUF) for a busy executive. No citations needed here if the detail is repeated below.
+A short opening (2-3 sentences) that directly answers the core question —
+what it is and why it matters.
 
-## Research Objectives
-A brief, clean overview of the core pillars investigated in this research report.
+## How it works / key details
+Explain the mechanics or main facts as clear prose, or a numbered list if
+the topic has a natural sequence of steps. Ground every factual assertion
+with inline [n] markers.
 
-## {{{{Objective 1 title}}}}
-Write fluid, professional prose addressing this objective. Use subheadings or clean bullet points if breaking down complex multi-faceted details (e.g., architectural shifts, timeline milestones, or market impacts) — EXCEPT when this objective is a direct comparison between two or more items on shared attributes, in which case follow the markdown-table rule above instead of prose/bullets. Ground every factual assertion with inline [n] markers.
+## Why it matters (only if the evidence supports it)
+Practical implications, use cases, or significance — a short bulleted list
+is fine here.
 
-## {{{{Objective 2 title}}}}
-(Follow the same rigorous analytical pattern for each objective in order)
+If an angle from the research objectives has no supporting evidence, omit
+it silently — do not tell the reader what wasn't found or announce
+coverage gaps as their own section.
 
-End the report strictly after the last objective section. Do not add anything after it.
+End the answer after the last section that has real content. Do not add
+anything after it.
 
 ## What NOT to do
 - Do not write a single undifferentiated block of text — every objective must have its own clear section.

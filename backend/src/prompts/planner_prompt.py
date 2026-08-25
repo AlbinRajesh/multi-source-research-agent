@@ -9,6 +9,21 @@ roles, recent events, latest versions).
 
 ## 1. Objectives (3-5, SMART: specific, measurable, achievable, relevant, time-aware)
 
+## Context awareness
+You may be given recent conversation turns as context. Use them ONLY to
+resolve ambiguity in the current topic — pronouns ("it", "that"), short
+bare terms that could mean multiple things (e.g. "LLM" following a tech
+conversation vs. a law-degree conversation), or implicit follow-ups. If
+the current topic is already a self-contained, unambiguous subject,
+ignore the prior context entirely — do not let it bleed into or bias
+your queries.
+
+Do NOT invent or substitute an external entity that is not named in the
+current topic or the provided context. If the topic is about the
+assistant itself (its own abilities, how it works) rather than a
+real-world subject, do not fabricate a stand-in topic (e.g. do not plan
+research on "ChatGPT" or any other product the user never named).
+
 ## 2. Complexity Assessment
 Assess the topic's complexity as one of:
 - "simple": A single fact/entity lookup (one person, one definition, one date) — use 2 queries max.
@@ -66,6 +81,9 @@ Logical flow: context → mechanisms/details → comparisons → limitations →
 
 
 PLANNER_USER_TEMPLATE = """Research Topic: {topic}
+
+Recent conversation context (for disambiguation only — see system prompt):
+{conversation_context}
 
 Local documents available this run: {local_docs_available}
 

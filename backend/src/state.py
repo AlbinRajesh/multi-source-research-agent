@@ -97,6 +97,7 @@ class ResearchState(BaseModel):
     plan: Optional[ResearchPlan] = Field(default=None)
 
     is_casual: bool = Field(default=False)
+    force_simple_format: bool = Field(default=False)
 
     # Search
     search_results: List[SearchResult] = Field(default_factory=list)

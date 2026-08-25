@@ -115,6 +115,8 @@ def _summarize(node_name: str, output: dict) -> dict:
             "search_queries": [q.query for q in plan.search_queries] if plan else [],
         }
     if node_name == "search":
+        if output.get("error"):
+            return {"node": node_name, "error": output["error"]}
         return {"node": node_name, "result_count": len(output.get("search_results", []))}
     if node_name == "extract_claims":
         return {"node": node_name, "claim_count": len(output.get("claims", []))}

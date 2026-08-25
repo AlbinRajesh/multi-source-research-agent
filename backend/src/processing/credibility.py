@@ -58,7 +58,7 @@ class CredibilityScorer:
         if not url:
             return {'score': 0, 'factors': ['No URL'], 'level': 'low'}
 
-        score = 30  # Base score
+        score = 40 # Base score
         factors = []
 
         try:
