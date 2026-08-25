@@ -14,7 +14,9 @@ function stageSummary(entry) {
     case "plan":
       return `${entry.search_queries?.length ?? 0} queries planned`;
     case "search":
-      return `${entry.result_count} sources retrieved`;
+      return entry.local_count
+        ? `${entry.result_count} sources retrieved (${entry.local_count} from your docs)`
+        : `${entry.result_count} sources retrieved`;
     case "extract_claims":
       return `${entry.claim_count} claims extracted`;
     case "verify":

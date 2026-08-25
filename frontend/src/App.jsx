@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import ChatSidebar from "./components/Chatsidebar";
 import ChatMessage from "./components/ChatMessage";
 import QueryInput from "./components/QueryInput";
+import FileUploader from "./components/FileUploader";
 import { IconShield } from "./components/icons";
 import { useResearchStream } from "./hooks/useResearchStream";
 
@@ -16,7 +17,13 @@ export default function App() {
     deleteSession,
     isRunning,
   } = useResearchStream();
+  
   const scrollRef = useRef(null);
+
+  // --- Document / RAG State ---
+  const [docs, setDocs] = useState([]);
+  const [selectedDocId, setSelectedDocId] = useState(null);
+  const [showUploader, setShowUploader] = useState(false);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -36,27 +43,61 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, [newChat]);
 
-  const handleSubmit = (topic) => run(topic, activeSession?.id);
+  // Pass sources array to run() based on uploaded docs
+  const handleSubmit = (topic) => {
+    const sources = docs.length > 0 ? ["web", "local"] : ["web"];
+    run(topic, activeSession?.id, sources);
+  };
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-canvas">
-      <ChatSidebar
+       <ChatSidebar
         sessions={sessions}
         activeId={activeSession?.id}
         onSelect={selectSession}
         onNew={newChat}
         onRename={renameSession}
         onDelete={deleteSession}
+        showUploader={showUploader}
+        onToggleUploader={() => setShowUploader(!showUploader)}
+        docCount={docs.length}
       />
 
+      {/* Conditional File Uploader Drawer next to Sidebar */}
+      {showUploader && (
+        <div className="w-80 border-r border-white/[0.05] bg-surface-1 flex flex-col z-20 shadow-2xl">
+          <div className="flex justify-between items-center p-4 border-b border-white/[0.05]">
+            <h2 className="text-sm font-semibold text-ink">Local Documents</h2>
+            <button
+              onClick={() => setShowUploader(false)}
+              className="text-ink-muted hover:text-ink transition"
+              aria-label="Close uploader"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            <FileUploader
+              docs={docs}
+              selectedDocId={selectedDocId}
+              onSelectDoc={setSelectedDocId}
+              setDocs={setDocs}
+            />
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 flex flex-col h-screen relative overflow-hidden">
+        {/* Top bar control for Document Panel toggle */}
+        
+
         <main className="flex-1 overflow-y-auto relative">
           {!activeSession && <AmbientGlow />}
 
           <div className="relative max-w-3xl mx-auto px-6 py-8 min-h-full flex flex-col">
             {!activeSession && (
               <div className="flex-1 flex items-center justify-center">
-                <EmptyState onSubmit={run} />
+                <EmptyState onSubmit={handleSubmit} />
               </div>
             )}
 

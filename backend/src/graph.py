@@ -11,6 +11,7 @@ SqliteSaver checkpointing + conditional routing), extended with:
 import uuid
 import logging
 from metrics.token_counter import TokenTracker
+from src.rag.vector_store import has_any_documents
 from src.agents.router import RouterAgent
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -275,7 +276,11 @@ async def refine_search_queries(state: ResearchState) -> dict:
 
     updated_plan = state.plan.model_copy(update={
         "search_queries": [
-            SearchQuery(query=q, purpose="Retry: resolve unconfirmed claim", source_hint="web")
+            SearchQuery(
+                query=q,
+                purpose="Retry: resolve unconfirmed claim",
+                source_hint="both" if "local" in state.sources_available else "web",
+            )
             for q in deduped
         ]
     })
@@ -315,9 +320,13 @@ async def run_research(
         if existing and existing.values:
             prior_history = existing.values.get("conversation_history", [])
 
+    sources = sources_available or ["web"]
+    if "local" not in sources and has_any_documents():
+        sources = sources + ["local"]
+
     initial_state = ResearchState(
         research_topic=topic,
-        sources_available=sources_available or ["web"],
+        sources_available=sources,
         token_tracker=TokenTracker(),
         conversation_history=prior_history + [{"role": "user", "content": topic}],
     )
@@ -349,11 +358,15 @@ async def run_research(
 
     return final_state
 
-async def run_research_with_persistence(topic: str, thread_id: Optional[str] = None) -> Dict[str, Any]:
+async def run_research_with_persistence(topic: str, sources_available: Optional[list] = None, thread_id: Optional[str] = None) -> Dict[str, Any]:
     """SQLite-persisted version — survives process restarts."""
+    sources = sources_available or ["web"]
+    if "local" not in sources and has_any_documents():
+        sources = sources + ["local"]
+
     initial_state = ResearchState(
         research_topic=topic,
-        sources_available=["web"],
+        sources_available=sources,
         token_tracker=TokenTracker(),
     )
     tid = thread_id or f"research-{uuid.uuid4().hex[:8]}"
@@ -366,7 +379,6 @@ async def run_research_with_persistence(topic: str, thread_id: Optional[str] = N
         except Exception as e:
             logger.error(f"Failed. Resume with thread_id: {tid}")
             raise
-
 
 async def resume_research(thread_id: str) -> Dict[str, Any]:
     run_config = {"configurable": {"thread_id": thread_id}}

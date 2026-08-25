@@ -32,7 +32,7 @@ export function useResearchStream() {
   }, []);
 
   const run = useCallback(
-    async (topic, existingSessionId) => {
+    async (topic, existingSessionId, sources) => {
       let session;
       if (existingSessionId) {
         session = sessions.find((s) => s.id === existingSessionId);
@@ -51,7 +51,7 @@ export function useResearchStream() {
       }
 
       try {
-        await streamResearch(topic, session.threadId, {
+        await streamResearch(topic, session.threadId, sources, {
           onNode: (data) => {
             patchSession(session.id, (s) => {
               const nodeLog = [...s.nodeLog, data];

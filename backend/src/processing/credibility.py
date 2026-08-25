@@ -41,7 +41,6 @@ class CredibilityScorer:
         'axios.com', 'fortune.com',
 
         # Company/official sources
-         # Company/official sources
         '.google', 'googleblog.com', 'newsroom.',
 
         # Official framework/language docs
@@ -100,6 +99,9 @@ class CredibilityScorer:
         kept = []
         scores = []
         for r in results:
+            if getattr(r, "source_type", "web") == "local":
+                kept.append(r)
+                continue
             cred = self.score_url(r.url)
             scores.append(cred['score'])
             if cred['score'] >= min_score:

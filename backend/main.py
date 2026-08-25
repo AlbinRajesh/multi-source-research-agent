@@ -9,10 +9,12 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from langgraph.checkpoint.memory import MemorySaver
 
+from src.rag.vector_store import has_any_documents
 from src.graph import run_research, run_research_with_persistence, resume_research, create_research_graph
 from src.state import ResearchState
 from src.exceptions import DeepResearchError, ResearchAgentError
 from src.config import config
+from src.api.upload import router as upload_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,12 +34,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 3. Mount routers
+app.include_router(upload_router)
+
 # Persistent checkpointer and compiled graph instance across requests
 _checkpointer = MemorySaver()
 _graph = create_research_graph(checkpointer=_checkpointer)
 
 
-# 3. Request/response models
+# 4. Request/response models
 class ResearchRequest(BaseModel):
     topic: str
     sources: Optional[List[str]] = None
@@ -49,7 +54,7 @@ class ResumeRequest(BaseModel):
     thread_id: str
 
 
-# 4. All routes
+# 5. All routes
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -57,12 +62,55 @@ async def health():
 
 @app.post("/research")
 async def research(req: ResearchRequest):
-    ...
+    tid = req.thread_id or f"research-{uuid.uuid4().hex[:8]}"
+    run_config = {"configurable": {"thread_id": tid}}
 
+    sources = req.sources or ["web"]
+    if "local" not in sources and has_any_documents():
+        sources = sources + ["local"]
+
+    try:
+        if req.persist:
+            async with create_sqlite_checkpointer() as checkpointer:
+                graph = create_research_graph(checkpointer=checkpointer)
+
+                prior_history = []
+                existing = await graph.aget_state(run_config)
+                if existing and existing.values:
+                    prior_history = existing.values.get("conversation_history", [])
+
+                initial_state = ResearchState(
+                    research_topic=req.topic,
+                    sources_available=sources,
+                    conversation_history=prior_history + [{"role": "user", "content": req.topic}],
+                )
+                final_state = await graph.ainvoke(initial_state, config=run_config)
+        else:
+            prior_history = []
+            existing = await _graph.aget_state(run_config)
+            if existing and existing.values:
+                prior_history = existing.values.get("conversation_history", [])
+
+            initial_state = ResearchState(
+                research_topic=req.topic,
+                sources_available=sources,
+                conversation_history=prior_history + [{"role": "user", "content": req.topic}],
+            )
+            final_state = await _graph.ainvoke(initial_state, config=run_config)
+
+        return {"thread_id": tid, "result": final_state}
+    except Exception as e:
+        logger.error(f"Research failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/research/resume")
 async def research_resume(req: ResumeRequest):
-    ...
+    try:
+        final_state = await resume_research(req.thread_id)
+        return {"thread_id": req.thread_id, "result": final_state}
+    except Exception as e:
+        logger.error(f"Research resume failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/research/stream")
@@ -75,9 +123,13 @@ async def research_stream(req: ResearchRequest):
     if existing and existing.values:
         prior_history = existing.values.get("conversation_history", [])
 
+    sources = req.sources or ["web"]
+    if "local" not in sources and has_any_documents():
+        sources = sources + ["local"]
+
     initial_state = ResearchState(
         research_topic=req.topic,
-        sources_available=req.sources or ["web"],
+        sources_available=sources,
         conversation_history=prior_history + [{"role": "user", "content": req.topic}],
     )
     graph = _graph
@@ -117,7 +169,12 @@ def _summarize(node_name: str, output: dict) -> dict:
     if node_name == "search":
         if output.get("error"):
             return {"node": node_name, "error": output["error"]}
-        return {"node": node_name, "result_count": len(output.get("search_results", []))}
+        results = output.get("search_results", [])
+        return {
+            "node": node_name,
+            "result_count": len(results),
+            "local_count": sum(1 for r in results if getattr(r, "source_type", None) == "local"),
+        }
     if node_name == "extract_claims":
         return {"node": node_name, "claim_count": len(output.get("claims", []))}
     if node_name == "verify":

@@ -21,6 +21,7 @@ class RetrieverAgent:
 
     def __init__(self, search_provider=None, extractor=None, scorer=None):
         self.search_provider = search_provider or self._get_default_provider()
+        self.local_provider = self._get_local_provider()
         self.extractor = extractor or ContentExtractor()
         self.scorer = scorer or CredibilityScorer()
 
@@ -33,11 +34,21 @@ class RetrieverAgent:
             return SearXNGSearchProvider()
         raise ConfigurationError(f"Unknown search_provider: {config.search_provider}")
 
+    def _get_local_provider(self):
+        from src.search_providers.local_rag_provider import LocalRAGProvider
+        return LocalRAGProvider()
+
+    def _score_result(self, r) -> dict:
+        if getattr(r, "source_type", "web") == "local":
+            return {'score': 100, 'factors': ['Local document'], 'level': 'high', 'domain': 'local'}
+        return self.scorer.score_url(r.url)
+
     async def search(self, state: ResearchState) -> Dict[str, Any]:
         if not state.plan:
             return {"error": "No plan available"}
 
         web_queries = [q for q in state.plan.search_queries if q.source_hint in ("web", "both")]
+        local_queries = [q for q in state.plan.search_queries if q.source_hint in ("local", "both")]
 
         try:
             semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_SEARCHES)
@@ -86,7 +97,20 @@ class RetrieverAgent:
                     continue
                 all_results.extend(res)
 
-            all_results = await self.extractor.enhance_results(all_results)
+            # Fan out local queries (local disk, no rate-limiting semaphore needed)
+            local_tasks = [self.local_provider.search(q.query, max_results=config.max_search_results_per_query) for q in local_queries]
+            local_results_per_query = await asyncio.gather(*local_tasks, return_exceptions=True)
+            for q, res in zip(local_queries, local_results_per_query):
+                if isinstance(res, Exception):
+                    logger.error(f"Local RAG search failed for query {q.query!r}: {res}")
+                    continue
+                all_results.extend(res)
+
+            # Split results by source type to avoid redundant content extraction on local chunks
+            web_results = [r for r in all_results if r.source_type == "web"]
+            local_results = [r for r in all_results if r.source_type == "local"]
+            web_results = await self.extractor.enhance_results(web_results)
+            all_results = web_results + local_results
             
             # Keep track of which URLs are brand new in this search/retry cycle
             existing_urls = {r.url for r in state.search_results}
@@ -94,8 +118,8 @@ class RetrieverAgent:
             combined = dedup_results(state.search_results + all_results)
             filtered = self.scorer.filter_results(combined, min_score=config.min_credibility_score)
 
-            # Sort all filtered results by credibility score descending
-            scored = sorted(filtered, key=lambda r: self.scorer.score_url(r.url)["score"], reverse=True)
+            # Sort all filtered results by credibility score descending using source-aware scoring
+            scored = sorted(filtered, key=lambda r: self._score_result(r)["score"], reverse=True)
             
             # Reserve slots for newly found results on retries so they aren't completely starved out by global top-N scoring
             max_docs = config.max_docs_for_extraction
@@ -111,7 +135,7 @@ class RetrieverAgent:
             remaining_pool = [r for r in scored if r not in top_new]
             filtered = top_new + remaining_pool[:remaining_slots]
 
-            credibility_scores = [self.scorer.score_url(r.url) for r in filtered]
+            credibility_scores = [self._score_result(r) for r in filtered]
 
             logger.info(f"Retrieved {len(all_results)} -> {len(filtered)} after dedup+credibility (capped & accumulated with retry reservation)")
 

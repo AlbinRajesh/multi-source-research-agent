@@ -133,7 +133,17 @@ function SessionCard({ session, active, onSelect, onRename, onDelete }) {
   );
 }
 
-export default function ChatSidebar({ sessions, activeId, onSelect, onNew, onRename, onDelete }) {
+export default function ChatSidebar({
+  sessions,
+  activeId,
+  onSelect,
+  onNew,
+  onRename,
+  onDelete,
+  showUploader,
+  onToggleUploader,
+  docCount,
+}) {
   return (
     <aside className="hidden md:flex w-[280px] shrink-0 flex-col bg-sidebar border-r border-white/5 h-screen">
       <div className="px-3 pt-5 pb-4">
@@ -145,6 +155,13 @@ export default function ChatSidebar({ sessions, activeId, onSelect, onNew, onRen
             Research Agent
           </span>
         </div>
+
+        <button
+          onClick={onToggleUploader}
+          className="w-full flex items-center justify-between gap-2 rounded-xl bg-surface-2 border border-white/[0.06] px-3.5 py-2.5 text-sm font-medium text-ink-muted hover:text-ink hover:bg-surface-3 transition-all duration-200 ease-in-out mb-2"
+        >
+          <span>{showUploader ? "Hide Documents" : `Documents (${docCount})`}</span>
+        </button>
 
         <button
           onClick={onNew}

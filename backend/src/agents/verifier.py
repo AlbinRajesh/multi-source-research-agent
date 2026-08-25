@@ -113,7 +113,11 @@ class VerificationAgent:
                 elif len(source_urls) >= 2:
                     confidence = "verified"
                 elif len(source_urls) == 1:
-                    confidence = "single_source"
+                    sole_doc = url_to_doc.get(source_urls[0])
+                    if sole_doc and sole_doc.source_type == "local":
+                        confidence = "verified"  # user's own doc — trusted once grounded, no 2nd-source requirement
+                    else:
+                        confidence = "single_source"
                 else:
                     confidence = "unconfirmed"
 
