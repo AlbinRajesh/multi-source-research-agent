@@ -11,6 +11,7 @@ SqliteSaver checkpointing + conditional routing), extended with:
 import uuid
 import logging
 from metrics.token_counter import TokenTracker
+from src.agents.fast_local_agent import FastLocalAgent
 from src.rag.vector_store import has_any_documents
 from src.agents.router import RouterAgent
 from pathlib import Path
@@ -83,11 +84,13 @@ def create_research_graph(checkpointer=None):
     claim_extractor = ClaimExtractionAgent()
     verifier = VerificationAgent()
     synthesizer = SynthesizerAgent()
+    fast_local_agent = FastLocalAgent()
 
     workflow = StateGraph(ResearchState)
 
     workflow.add_node("route", timed_node("route")(router.route))
     workflow.add_node("plan", timed_node("plan")(planner.plan))
+    workflow.add_node("fast_local_answer", timed_node("fast_local_answer")(fast_local_agent.answer))
     workflow.add_node("search", timed_node("search")(retriever.search))
     workflow.add_node("extract_claims", timed_node("extract_claims")(claim_extractor.extract))
     workflow.add_node("relevance_filter", timed_node("relevance_filter")(relevance_filter))
@@ -105,6 +108,8 @@ def create_research_graph(checkpointer=None):
         if state.error or not state.plan or not state.plan.search_queries:
             logger.error(f"Planning invalid: {state.error}")
             return END
+        if getattr(state.plan, "mode", None) == "fast_local" and state.plan.complexity == "simple":
+            return "fast_local_answer"
         return "search"
 
     def after_search(state: ResearchState) -> str:
@@ -114,7 +119,12 @@ def create_research_graph(checkpointer=None):
         return "extract_claims"
 
     workflow.add_conditional_edges("route", after_route, {"plan": "plan", END: END})
-    workflow.add_conditional_edges("plan", after_plan, {"search": "search", END: END})
+    workflow.add_conditional_edges("plan", after_plan, {"search": "search", "fast_local_answer": "fast_local_answer", END: END})
+    workflow.add_conditional_edges(
+        "fast_local_answer",
+        lambda s: s.route_decision,
+        {"done": END, "escalate": "search"}
+    )
     workflow.add_conditional_edges("search", after_search, {"extract_claims": "extract_claims", END: END})
     workflow.add_conditional_edges("extract_claims", after_extract_claims, {"relevance_filter": "relevance_filter", "synthesize": "synthesize"})
     workflow.add_conditional_edges("relevance_filter", after_relevance_filter, {"verify": "verify", "synthesize": "synthesize"})

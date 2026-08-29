@@ -102,6 +102,8 @@ class PlannerAgent:
                     provider=config.model_provider,
                 )
 
+                logger.info(f"[plan_debug] raw parsed planner mode: {result.get('mode')!r}")
+
                 if not all(k in result for k in ("topic", "objectives", "search_queries", "report_outline")):
                     raise PlanningError("Invalid plan structure")
                 if not result["search_queries"]:
@@ -141,6 +143,7 @@ class PlannerAgent:
                     ],
                     report_outline=result["report_outline"][: config.max_report_sections],
                     complexity=complexity,
+                    mode=result.get("mode", "hybrid"),
                 )
 
                 return {

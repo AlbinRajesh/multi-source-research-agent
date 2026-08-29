@@ -27,6 +27,7 @@ class ResearchPlan(BaseModel):
     search_queries: List[SearchQuery]
     report_outline: List[str]
     complexity: Literal["simple", "moderate", "complex"] = "moderate"
+    mode: Literal["fast_local", "hybrid", "full_web"] = "full_web"
 
 
 # =============================================================================
@@ -106,7 +107,8 @@ class ResearchState(BaseModel):
 
     # Added Workflow Tracking Fields
     processed_result_indices: List[int] = Field(default_factory=list)
-    route_decision: Optional[Literal["search", "synthesize", "plan", "refine_search"]] = Field(default=None)
+    route_decision: Optional[Literal["search", "synthesize", "plan", "refine_search", "escalate", "done"]] = Field(default=None)
+
 
     # Claim extraction + verification (our added stages)
     claims: List[Claim] = Field(default_factory=list)

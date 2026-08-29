@@ -106,3 +106,7 @@ def filter_by_relevance(
     )
 
     return kept_claims, scores
+def warmup() -> None:
+    """Force the relevance reranker model to load once. Call at server startup."""
+    _get_model()
+    logger.info("Relevance reranker warmed up.")

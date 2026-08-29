@@ -71,6 +71,28 @@ export function useResearchStream() {
                 };
               }
 
+              if (data.node === "fast_local_answer") {
+                if (data.error) {
+                  return { nodeLog, error: data.error, status: "error" };
+                }
+                if (data.route_decision === "escalate") {
+                  // fell through to full pipeline — don't render a message yet,
+                  // wait for the eventual "synthesize" event instead
+                  return { nodeLog };
+                }
+                return {
+                  nodeLog,
+                  messages: [
+                    ...s.messages,
+                    {
+                      role: "assistant",
+                      content: data.final_report,
+                      citations: data.citations ?? [],
+                    },
+                  ],
+                };
+              }
+
               if (data.node === "synthesize") {
                 if (data.error) {
                   return { nodeLog, error: data.error, status: "error" };

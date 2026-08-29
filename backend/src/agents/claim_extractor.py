@@ -40,7 +40,7 @@ class ClaimExtractionAgent:
         r"\[.*\]\(https?://\w{2,3}\.\w+\.(org|com)/",
     ]
 
-    def __init__(self, llm=None, max_concurrent: int = 2):
+    def __init__(self, llm=None, max_concurrent: int = 3):
         # fast/cheap model — this stage runs once per document, keep it light
         self.llm = llm or get_llm(
             temperature=0.0,

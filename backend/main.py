@@ -54,6 +54,18 @@ class ResumeRequest(BaseModel):
     thread_id: str
 
 
+@app.on_event("startup")
+async def preload_models():
+    from src.rag.embeddings import warmup as warmup_embeddings
+    from src.rag.reranker import warmup as warmup_reranker
+    from src.utils.relevance import warmup as warmup_relevance
+
+    logger.info("Preloading models at startup...")
+    warmup_embeddings()
+    warmup_reranker()
+    warmup_relevance()
+    logger.info("Model preload complete.")
+    
 # 5. All routes
 @app.get("/health")
 async def health():
@@ -186,6 +198,13 @@ def _summarize(node_name: str, output: dict) -> dict:
         }
     if node_name == "check_retry":
         return {"node": node_name, "route": output.get("route_decision")}
+    if node_name == "fast_local_answer":
+        return {
+            "node": node_name,
+            "final_report": output.get("final_report", ""),
+            "citations": output.get("citations", []),
+            "route_decision": output.get("route_decision"),
+        }
     if node_name == "synthesize":
         if "error" in output:
             return {"node": node_name, "error": output["error"]}

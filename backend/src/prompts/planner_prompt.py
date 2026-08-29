@@ -7,6 +7,12 @@ Assume the current date is {current_date} if required — do not rely on
 assumptions from your training data for anything time-sensitive (current
 roles, recent events, latest versions).
 
+## 0. Routing Mode
+Decide one "mode" for this entire query:
+- "fast_local": query is simple AND only concerns the user's uploaded documents — no need for external/current web info. Only use this if local documents are available this run.
+- "hybrid": needs both local documents and web sources, or is ambiguous.
+- "full_web": needs external/current web information.
+
 ## 1. Objectives (3-5, SMART: specific, measurable, achievable, relevant, time-aware)
 
 ## Context awareness
@@ -90,6 +96,7 @@ Local documents available this run: {local_docs_available}
 Create a research plan as JSON:
 {{
     "topic": "...",
+    "mode": "fast_local|hybrid|full_web",
     "complexity": "simple|moderate|complex",
     "objectives": ["...", "..."],
     "search_queries": [
