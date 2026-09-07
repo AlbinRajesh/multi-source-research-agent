@@ -11,6 +11,7 @@ SqliteSaver checkpointing + conditional routing), extended with:
 import uuid
 import logging
 from metrics.token_counter import TokenTracker
+from src.processing.chunk_relevance import filter_chunks_by_relevance
 from src.agents.fast_local_agent import FastLocalAgent
 from src.rag.vector_store import has_any_documents
 from src.agents.router import RouterAgent
@@ -92,6 +93,7 @@ def create_research_graph(checkpointer=None):
     workflow.add_node("plan", timed_node("plan")(planner.plan))
     workflow.add_node("fast_local_answer", timed_node("fast_local_answer")(fast_local_agent.answer))
     workflow.add_node("search", timed_node("search")(retriever.search))
+    workflow.add_node("chunk_relevance_filter", timed_node("chunk_relevance_filter")(chunk_relevance_filter))
     workflow.add_node("extract_claims", timed_node("extract_claims")(claim_extractor.extract))
     workflow.add_node("relevance_filter", timed_node("relevance_filter")(relevance_filter))
     workflow.add_node("verify", timed_node("verify")(verify_only_weak(verifier.verify)))
@@ -116,7 +118,7 @@ def create_research_graph(checkpointer=None):
         if state.error or not state.search_results:
             logger.error(f"Search invalid: {state.error}")
             return END
-        return "extract_claims"
+        return "chunk_relevance_filter"
 
     workflow.add_conditional_edges("route", after_route, {"plan": "plan", END: END})
     workflow.add_conditional_edges("plan", after_plan, {"search": "search", "fast_local_answer": "fast_local_answer", END: END})
@@ -125,7 +127,8 @@ def create_research_graph(checkpointer=None):
         lambda s: s.route_decision,
         {"done": END, "escalate": "search"}
     )
-    workflow.add_conditional_edges("search", after_search, {"extract_claims": "extract_claims", END: END})
+    workflow.add_conditional_edges("search", after_search, {"chunk_relevance_filter": "chunk_relevance_filter", END: END})
+    workflow.add_edge("chunk_relevance_filter", "extract_claims")
     workflow.add_conditional_edges("extract_claims", after_extract_claims, {"relevance_filter": "relevance_filter", "synthesize": "synthesize"})
     workflow.add_conditional_edges("relevance_filter", after_relevance_filter, {"verify": "verify", "synthesize": "synthesize"})
 
@@ -146,6 +149,26 @@ def create_research_graph(checkpointer=None):
 # =============================================================================
 # Relevance Filter Node & Routing Edges
 # =============================================================================
+
+
+async def chunk_relevance_filter(state: ResearchState) -> dict:
+    if not state.search_results:
+        return {}
+    kept, scores = filter_chunks_by_relevance(
+        state.search_results,
+        state.research_topic,
+        keep_ratio=config.chunk_relevance_keep_ratio,
+        min_survivors=config.chunk_relevance_min_survivors,
+        global_budget=config.max_docs_for_extraction,
+    )
+    if scores:
+        logger.info(
+            f"[chunk_relevance_dist] min={min(scores):.2f} max={max(scores):.2f} "
+            f"avg={sum(scores)/len(scores):.2f} n={len(scores)}"
+        )
+    logger.info(f"Chunk relevance filter: {len(state.search_results)} -> {len(kept)} results")
+    return {"search_results": kept}
+
 
 async def relevance_filter(state: ResearchState) -> dict:
     if not state.claims:

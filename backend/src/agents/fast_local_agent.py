@@ -36,6 +36,10 @@ class FastLocalAgent:
         self.local_provider = local_provider or LocalRAGProvider()
 
     async def answer(self, state: ResearchState) -> Dict[str, Any]:
+        if "local" not in state.sources_available:
+            logger.info("[fast_local] no local sources available — escalating to full pipeline")
+            return {"route_decision": "escalate"}
+
         query = state.research_topic
         results = await self.local_provider.search(query, max_results=5)
 
@@ -46,7 +50,12 @@ class FastLocalAgent:
         context_blocks, citations = [], []
         for i, r in enumerate(results, start=1):
             context_blocks.append(f"[{i}] ({r.source_name}) {r.content}")
-            citations.append({"index": i, "source_name": r.source_name, "url": r.url})
+            citations.append({
+                "index": i,
+                "source_name": r.source_name,
+                "url": r.url,
+                "confidence": "fast_local",
+            })
 
         prompt = ChatPromptTemplate.from_messages([("human", FAST_LOCAL_PROMPT)])
         chain = prompt | self.llm | StrOutputParser()

@@ -41,8 +41,7 @@ PERSIST_EVERY_N_CHUNKS = 1000
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
-def _tokenize(text: str) -> list[str]:
-    """Lowercase, punctuation-stripped tokenizer — sufficient for BM25."""
+def tokenize(text: str) -> list[str]:
     return _TOKEN_RE.findall(text.lower())
 
 

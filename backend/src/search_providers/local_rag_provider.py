@@ -1,7 +1,8 @@
 """Local RAG search provider — wraps the hybrid retrieval stack in rag/
 to conform to the SearchProvider interface."""
+import asyncio
 import logging
-from typing import List
+from typing import List, Optional
 
 from src.search_providers.base import SearchProvider
 from src.state import SearchResult
@@ -16,9 +17,9 @@ class LocalRAGProvider(SearchProvider):
     def name(self) -> str:
         return "local_rag"
 
-    async def search(self, query: str, max_results: int = 3) -> List[SearchResult]:
+    async def search(self, query: str, max_results: int = 3, doc_ids: Optional[List[str]] = None) -> List[SearchResult]:
         try:
-            results = hybrid_search(query, top_k=max_results)
+            results = await asyncio.to_thread(hybrid_search, query, top_k=max_results, doc_ids=doc_ids)
         except Exception as e:
             raise SearchError(f"Local RAG search failed for '{query}'", details=str(e))
 
@@ -36,5 +37,5 @@ class LocalRAGProvider(SearchProvider):
                 source_type="local",
                 source_name=source_name,
             ))
-        logger.info(f"LocalRAG: {len(out)} results for '{query}'")
+        logger.info(f"LocalRAG: {len(out)} results for '{query}' (doc_ids={doc_ids})")
         return out

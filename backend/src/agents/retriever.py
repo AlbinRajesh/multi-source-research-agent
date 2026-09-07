@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class RetrieverAgent:
     MAX_CONCURRENT_SEARCHES = 5  # stay comfortably under the Tavily connection pool (size 10)
-    SEARCH_MAX_RETRIES = 3       # attempts per sub-query before giving up on it
+    SEARCH_MAX_RETRIES = int(getattr(config, "search_max_retries", 3))      # attempts per sub-query before giving up on it
     SEARCH_RETRY_BASE_DELAY = 1.5  # seconds; backoff is base * 2**attempt
 
     def __init__(self, search_provider=None, extractor=None, scorer=None):
@@ -98,7 +98,14 @@ class RetrieverAgent:
                 all_results.extend(res)
 
             # Fan out local queries (local disk, no rate-limiting semaphore needed)
-            local_tasks = [self.local_provider.search(q.query, max_results=config.max_search_results_per_query) for q in local_queries]
+            local_tasks = [
+                self.local_provider.search(
+                    q.query,
+                    max_results=config.max_search_results_per_query,
+                    doc_ids=state.selected_doc_ids or None
+                )
+                for q in local_queries
+            ]
             local_results_per_query = await asyncio.gather(*local_tasks, return_exceptions=True)
             for q, res in zip(local_queries, local_results_per_query):
                 if isinstance(res, Exception):

@@ -145,13 +145,11 @@ anything after it.
 - Do not cite a source index that isn't in the provided claims list."""
 
 
-SYNTHESIS_USER_TEMPLATE = """Topic: {topic}
-
-Research objectives (write one section per objective, in this order):
+SYNTHESIS_USER_TEMPLATE = """Research objectives to cover:
 {objectives_block}
 
 Verified claims (use these; each has a citation index — assign each claim
-to the objective section(s) it supports):
+to the appropriate section):
 {claims_block}
 
 Claims noted but unconfirmed by any source (mention only if directly
@@ -159,8 +157,4 @@ relevant to an objective, and clearly flag as unconfirmed — never treat
 as fact):
 {unconfirmed_block}
 
-Write the full structured report now: Executive Summary, Research
-Objectives, then one section per objective above. Stop after the last
-objective section — do not add a References or Sources section, that
-is rendered separately. Use [n] citation markers matching the indices
-given."""
+Write the structured report now following the section rules in the system prompt. Stop after the last content section — do not add a References or Sources section. Use [n] citation markers matching the indices given."""

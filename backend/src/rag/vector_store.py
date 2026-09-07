@@ -199,6 +199,23 @@ def get_all_chunks(doc_id: str) -> list[SearchResult]:
     return [SearchResult(text=p.payload["text"], metadata=p.payload, score=1.0) for p in points]
 
 
+def list_all_documents() -> list[dict]:
+    client = _get_client()
+    points, _ = client.scroll(COLLECTION_NAME, limit=10000, with_payload=True)
+    docs: dict[str, dict] = {}
+    for p in points:
+        did = p.payload["doc_id"]
+        if did not in docs:
+            docs[did] = {
+                "doc_id": did,
+                "filename": p.payload.get("source", "unknown"),
+                "uploaded_at": p.payload.get("uploaded_at", ""),
+                "chunk_count": 0,
+            }
+        docs[did]["chunk_count"] += 1
+    return list(docs.values())
+
+
 def recreate_collection() -> None:
     """Drop and recreate the collection from scratch. Used by the test
     harness's reset_all() instead of scroll+delete-by-id — repeated

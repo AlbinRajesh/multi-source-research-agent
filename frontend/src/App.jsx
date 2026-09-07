@@ -19,7 +19,7 @@ export default function App() {
   } = useResearchStream();
   
   const scrollRef = useRef(null);
-
+ 
   // --- Document / RAG State ---
   const [docs, setDocs] = useState([]);
   const [selectedDocId, setSelectedDocId] = useState(null);
@@ -43,10 +43,10 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, [newChat]);
 
-  // Pass sources array to run() based on uploaded docs
+  // Pass sources array and selected doc IDs to run() based on uploaded docs
   const handleSubmit = (topic) => {
     const sources = docs.length > 0 ? ["web", "local"] : ["web"];
-    run(topic, activeSession?.id, sources);
+    run(topic, activeSession?.id, sources, selectedDocId ? [selectedDocId] : []);
   };
 
   return (
@@ -181,6 +181,7 @@ function EmptyState({ onSubmit }) {
           <IconShield className="text-verified" />
           Every claim checked against its source before it reaches you
         </span>
+
       </div>
 
       <div className="w-full max-w-xl">

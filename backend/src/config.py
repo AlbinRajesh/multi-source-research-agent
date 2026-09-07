@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     min_credibility_score: int = 40
     max_docs_for_extraction: int = 8
 
+    chunk_relevance_keep_ratio: float = 0.70
+    chunk_relevance_min_survivors: int = 4
+
     # Verification
     min_claims_verified_ratio: float = 0.6  # trigger retry loop if below this
     max_retries: int = 2

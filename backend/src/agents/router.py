@@ -68,8 +68,8 @@ class RouterAgent:
     def __init__(self, llm=None):
         self.llm = llm or get_llm(
             temperature=0.0,
-            model_override=config.claim_extraction_model,
-            provider_override="ollama",
+            provider_override="groq",
+            model_override="openai/gpt-oss-120b",
         )
         self.chat_llm = get_llm(
             temperature=0.6,

@@ -57,6 +57,19 @@ class ClaimExtractionAgent:
             return True  # too short to be a real claim
         return bool(self._boilerplate_re.search(text))
 
+    @staticmethod
+    def _is_extractable(text: str, min_len: int = 50) -> bool:
+        """Skip chunks too short or too fragment-like (bare page numbers,
+        isolated table cells, reference-list line fragments) to plausibly
+        contain a checkable claim — avoids LLM calls that reliably return
+        zero claims, based on the [claim_parse] zero-claims patterns observed
+        in testing (short numeric-only chunks, pipe-delimited citation lists)."""
+        if not text or len(text.strip()) < min_len:
+            return False
+        stripped = text.strip()
+        alpha_ratio = sum(c.isalpha() or c.isspace() for c in stripped) / len(stripped)
+        return alpha_ratio > 0.5
+
     async def extract(self, state: ResearchState) -> Dict[str, Any]:
         if not state.search_results:
             return {"claims": [], "current_stage": "synthesizing"}
@@ -82,7 +95,7 @@ class ClaimExtractionAgent:
         async def extract_one(idx: int, doc) -> List[Claim]:
             text = doc.content or doc.snippet or ""
             logger.info(f"[debug] {doc.url} content_len={len(text)} preview={text[:300]!r}")
-            if not text:
+            if not text or not self._is_extractable(text):
                 return []
             async with semaphore:
                 raw = None

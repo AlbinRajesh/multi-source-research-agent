@@ -5,6 +5,7 @@ const CONFIDENCE_STYLES = {
   corroborated: { label: "Verified", dot: "bg-verified", text: "text-verified", bg: "bg-verified-soft" },
   single_source: { label: "Single source", dot: "bg-single", text: "text-single", bg: "bg-single-soft" },
   conflicting: { label: "Conflicting", dot: "bg-conflict", text: "text-conflict", bg: "bg-conflict-soft" },
+  fast_local: { label: "From your document", dot: "bg-single", text: "text-single", bg: "bg-single-soft" },
 };
 
 export default function CitationList({ citations }) {

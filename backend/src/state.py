@@ -119,6 +119,8 @@ class ResearchState(BaseModel):
     confirmed_claims: list = []  
     weak_claims_to_resolve: list = []
 
+    selected_doc_ids: List[str] = Field(default_factory=list)
+    
     # Synthesis / report
     key_findings: List[str] = Field(default_factory=list)
     report_sections: List[ReportSection] = Field(default_factory=list)

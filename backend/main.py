@@ -10,7 +10,7 @@ from sse_starlette.sse import EventSourceResponse
 from langgraph.checkpoint.memory import MemorySaver
 
 from src.rag.vector_store import has_any_documents
-from src.graph import run_research, run_research_with_persistence, resume_research, create_research_graph
+from src.graph import create_sqlite_checkpointer, run_research, run_research_with_persistence, resume_research, create_research_graph
 from src.state import ResearchState
 from src.exceptions import DeepResearchError, ResearchAgentError
 from src.config import config
@@ -46,6 +46,7 @@ _graph = create_research_graph(checkpointer=_checkpointer)
 class ResearchRequest(BaseModel):
     topic: str
     sources: Optional[List[str]] = None
+    selected_doc_ids: Optional[List[str]] = None
     persist: bool = False
     thread_id: Optional[str] = None
 
@@ -94,6 +95,7 @@ async def research(req: ResearchRequest):
                 initial_state = ResearchState(
                     research_topic=req.topic,
                     sources_available=sources,
+                    selected_doc_ids=req.selected_doc_ids or [],
                     conversation_history=prior_history + [{"role": "user", "content": req.topic}],
                 )
                 final_state = await graph.ainvoke(initial_state, config=run_config)
@@ -106,6 +108,7 @@ async def research(req: ResearchRequest):
             initial_state = ResearchState(
                 research_topic=req.topic,
                 sources_available=sources,
+                selected_doc_ids=req.selected_doc_ids or [],
                 conversation_history=prior_history + [{"role": "user", "content": req.topic}],
             )
             final_state = await _graph.ainvoke(initial_state, config=run_config)
@@ -142,6 +145,7 @@ async def research_stream(req: ResearchRequest):
     initial_state = ResearchState(
         research_topic=req.topic,
         sources_available=sources,
+        selected_doc_ids=req.selected_doc_ids or [],
         conversation_history=prior_history + [{"role": "user", "content": req.topic}],
     )
     graph = _graph
