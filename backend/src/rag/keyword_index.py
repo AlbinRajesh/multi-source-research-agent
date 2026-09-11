@@ -3,15 +3,16 @@ Sparse (keyword-based) search using BM25.
 Complements dense/semantic search — catches exact terms, codes, and
 names that embedding similarity can miss.
 """
-
+import threading
 import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 import re
-import threading
 
 from rank_bm25 import BM25Okapi
+
+_index_lock = threading.Lock()
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ def tokenize(text: str) -> list[str]:
 def _rebuild_bm25():
     global _bm25
     if _chunk_texts:
-        tokenized = [_tokenize(t) for t in _chunk_texts]
+        tokenized = [tokenize(t) for t in _chunk_texts]
         _bm25 = BM25Okapi(tokenized)
     else:
         _bm25 = None
@@ -59,17 +60,20 @@ def _ensure_loaded():
     global _loaded
     if _loaded:
         return
-    if INDEX_FILE.exists():
-        try:
-            data = json.loads(INDEX_FILE.read_text(encoding="utf-8"))
-            _chunk_ids.extend(data["ids"])
-            _chunk_texts.extend(data["texts"])
-            _chunk_metadatas.extend(data["metadatas"])
-            _rebuild_bm25()
-            logger.info(f"Loaded BM25 index with {len(_chunk_texts)} chunk(s) from disk.")
-        except Exception as e:
-            raise KeywordIndexError(f"Failed to load BM25 index from disk: {e}")
-    _loaded = True
+    with _index_lock:
+        if _loaded:
+            return
+        if INDEX_FILE.exists():
+            try:
+                data = json.loads(INDEX_FILE.read_text(encoding="utf-8"))
+                _chunk_ids.extend(data["ids"])
+                _chunk_texts.extend(data["texts"])
+                _chunk_metadatas.extend(data["metadatas"])
+                _rebuild_bm25()
+                logger.info(f"Loaded BM25 index with {len(_chunk_texts)} chunk(s) from disk.")
+            except Exception as e:
+                raise KeywordIndexError(f"Failed to load BM25 index from disk: {e}")
+        _loaded = True
 
 
 def _persist(force: bool = False):
@@ -90,7 +94,8 @@ def _persist_async(force: bool = False):
     """Persist to disk on a background thread so callers (e.g. /upload) don't block on I/O."""
     def _do():
         try:
-            _persist(force=force)
+            with _index_lock:
+                _persist(force=force)
         except KeywordIndexError as e:
             logger.error(f"Background BM25 persist failed: {e}")
     threading.Thread(target=_do, daemon=True).start()
@@ -98,7 +103,8 @@ def _persist_async(force: bool = False):
 
 def flush_index() -> None:
     """Force a synchronous write of any pending changes. Call on graceful shutdown."""
-    _persist(force=True)
+    with _index_lock:
+        _persist(force=True)
 
 
 def add_chunks(chunks: list[str], doc_id: str, source_filename: str) -> int:
@@ -112,19 +118,21 @@ def add_chunks(chunks: list[str], doc_id: str, source_filename: str) -> int:
     if not chunks:
         raise KeywordIndexError("No chunks provided to index.")
 
-    if doc_id in {mid.rsplit("_", 1)[0] for mid in _chunk_ids}:
-        logger.warning(f"doc_id '{doc_id}' already exists in keyword index. Skipping re-add.")
-        return 0
+    with _index_lock:
+        if doc_id in {mid.rsplit("_", 1)[0] for mid in _chunk_ids}:
+            logger.warning(f"doc_id '{doc_id}' already exists in keyword index. Skipping re-add.")
+            return 0
 
-    global _dirty
+        global _dirty
 
-    for i, chunk in enumerate(chunks):
-        _chunk_ids.append(f"{doc_id}_{i}")
-        _chunk_texts.append(chunk)
-        _chunk_metadatas.append({"doc_id": doc_id, "source": source_filename, "chunk_index": i})
+        for i, chunk in enumerate(chunks):
+            _chunk_ids.append(f"{doc_id}_{i}")
+            _chunk_texts.append(chunk)
+            _chunk_metadatas.append({"doc_id": doc_id, "source": source_filename, "chunk_index": i})
 
-    _dirty = True
-    _rebuild_bm25()
+        _dirty = True
+        _rebuild_bm25()
+
     _persist_async(force=True)  
 
     logger.info(f"Indexed {len(chunks)} chunk(s) from '{source_filename}' (doc_id={doc_id}) for keyword search")
@@ -140,42 +148,44 @@ def sparse_search(query: str, top_k: int = 5, doc_ids: list[str] | None = None) 
     """
     _ensure_loaded()
 
-    if _bm25 is None or not _chunk_texts:
-        raise KeywordIndexError("Keyword index is empty — no documents have been indexed yet.")
+    with _index_lock:
+        if _bm25 is None or not _chunk_texts:
+            raise KeywordIndexError("Keyword index is empty — no documents have been indexed yet.")
 
-    scores = _bm25.get_scores(_tokenize(query))
+        scores = _bm25.get_scores(tokenize(query))
 
-    if doc_ids:
-        allowed = set(doc_ids)
-        scores = [
-            s if _chunk_metadatas[i]["doc_id"] in allowed else -1
-            for i, s in enumerate(scores)
+        if doc_ids:
+            allowed = set(doc_ids)
+            scores = [
+                s if _chunk_metadatas[i]["doc_id"] in allowed else -1
+                for i, s in enumerate(scores)
+            ]
+
+        ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+
+        return [
+            SearchResult(text=_chunk_texts[i], metadata=_chunk_metadatas[i], score=float(scores[i]))
+            for i in ranked if scores[i] > 0
         ]
-
-    ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
-
-    return [
-        SearchResult(text=_chunk_texts[i], metadata=_chunk_metadatas[i], score=float(scores[i]))
-        for i in ranked if scores[i] > 0
-    ]
 
 
 def delete_doc(doc_id: str) -> bool:
     """Delete all chunks belonging to a doc_id from the keyword index."""
     _ensure_loaded()
 
-    indices_to_remove = [i for i, mid in enumerate(_chunk_ids) if mid.rsplit("_", 1)[0] == doc_id]
+    with _index_lock:
+        indices_to_remove = [i for i, mid in enumerate(_chunk_ids) if mid.rsplit("_", 1)[0] == doc_id]
 
-    if not indices_to_remove:
-        return False
+        if not indices_to_remove:
+            return False
 
-    for i in reversed(indices_to_remove):
-        del _chunk_ids[i]
-        del _chunk_texts[i]
-        del _chunk_metadatas[i]
+        for i in reversed(indices_to_remove):
+            del _chunk_ids[i]
+            del _chunk_texts[i]
+            del _chunk_metadatas[i]
 
-    _rebuild_bm25()
-    _persist()
+        _rebuild_bm25()
+        _persist(force=True)
 
     logger.info(f"Deleted {len(indices_to_remove)} chunk(s) for doc_id '{doc_id}' from keyword index")
     return True

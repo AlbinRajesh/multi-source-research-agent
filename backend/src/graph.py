@@ -312,7 +312,7 @@ async def refine_search_queries(state: ResearchState) -> dict:
             SearchQuery(
                 query=q,
                 purpose="Retry: resolve unconfirmed claim",
-                source_hint="both" if "local" in state.sources_available else "web",
+                source_hint="both" if state.source_mode == "hybrid" else state.source_mode,
             )
             for q in deduped
         ]
@@ -331,8 +331,10 @@ async def refine_search_queries(state: ResearchState) -> dict:
 async def run_research(
     topic: str,
     sources_available: Optional[list] = None,
+    selected_doc_ids: Optional[list] = None,
     use_checkpoints: bool = True,
     thread_id: Optional[str] = None,
+    source_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     logger.info(f"Starting research on: {topic}")
 
@@ -346,20 +348,28 @@ async def run_research(
 
     graph = create_research_graph(checkpointer=checkpointer)
 
-    # Resume prior turns if this thread already has state
     prior_history = []
     if use_checkpoints and thread_id:
         existing = await graph.aget_state(run_config)
         if existing and existing.values:
             prior_history = existing.values.get("conversation_history", [])
 
-    sources = sources_available or ["web"]
-    if "local" not in sources and has_any_documents():
+    mode = source_mode or (
+        "hybrid" if {"web", "local"}.issubset(set(sources_available or []))
+        else "local" if (sources_available or ["web"]) == ["local"]
+        else "web"
+    )
+    sources = ["web", "local"] if mode == "hybrid" else [mode]
+    # Local RAG fires only if: feature flag on AND caller explicitly
+    # selected documents. Never fall back to "search the whole store."
+    if config.local_rag_enabled and "local" not in sources and selected_doc_ids:
         sources = sources + ["local"]
 
     initial_state = ResearchState(
         research_topic=topic,
         sources_available=sources,
+        source_mode=mode,
+        selected_doc_ids=selected_doc_ids or [],
         token_tracker=TokenTracker(),
         conversation_history=prior_history + [{"role": "user", "content": topic}],
     )
@@ -391,15 +401,29 @@ async def run_research(
 
     return final_state
 
-async def run_research_with_persistence(topic: str, sources_available: Optional[list] = None, thread_id: Optional[str] = None) -> Dict[str, Any]:
+
+async def run_research_with_persistence(
+    topic: str,
+    sources_available: Optional[list] = None,
+    selected_doc_ids: Optional[list] = None,
+    thread_id: Optional[str] = None,
+    source_mode: Optional[str] = None,
+) -> Dict[str, Any]:
     """SQLite-persisted version — survives process restarts."""
-    sources = sources_available or ["web"]
-    if "local" not in sources and has_any_documents():
+    mode = source_mode or (
+        "hybrid" if {"web", "local"}.issubset(set(sources_available or []))
+        else "local" if (sources_available or ["web"]) == ["local"]
+        else "web"
+    )
+    sources = ["web", "local"] if mode == "hybrid" else [mode]
+    if config.local_rag_enabled and "local" not in sources and selected_doc_ids:
         sources = sources + ["local"]
 
     initial_state = ResearchState(
         research_topic=topic,
         sources_available=sources,
+        source_mode=mode,
+        selected_doc_ids=selected_doc_ids or [],
         token_tracker=TokenTracker(),
     )
     tid = thread_id or f"research-{uuid.uuid4().hex[:8]}"
@@ -412,7 +436,7 @@ async def run_research_with_persistence(topic: str, sources_available: Optional[
         except Exception as e:
             logger.error(f"Failed. Resume with thread_id: {tid}")
             raise
-
+        
 async def resume_research(thread_id: str) -> Dict[str, Any]:
     run_config = {"configurable": {"thread_id": thread_id}}
     async with create_sqlite_checkpointer() as checkpointer:

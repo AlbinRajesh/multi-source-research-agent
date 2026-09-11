@@ -4,7 +4,7 @@ from typing import Optional
 
 class ResearchRequest(BaseModel):
     query: str
-    doc_ids: Optional[list[str]] = None  # explicit doc selection — None/empty = web-only, never "search everything"
+    doc_ids: Optional[list[str]] = None  # explicit doc selection — None/empty = web-only
 
 
 class DocumentInfo(BaseModel):

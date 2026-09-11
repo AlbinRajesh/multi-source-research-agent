@@ -10,9 +10,10 @@ from api.schemas import (
 )
 from src.graph import create_research_graph
 from src.state import ResearchState
+from src.config import config
 from src.rag.chunker import chunk_text
 from src.rag.vector_store import (
-    add_chunks, delete_doc, get_active_doc_id, VectorStoreError,
+    add_chunks, delete_doc, list_all_documents, VectorStoreError,
 )
 from src.processing.file_extract import extract_text  # ADJUST if real module name differs
 from metrics.token_counter import TokenTracker
@@ -29,9 +30,13 @@ graph = create_research_graph()  # compiled once at import time, no checkpointer
 
 @router.post("/research/stream")
 async def stream_research(payload: ResearchRequest):
+    sources = ["web"]
+    if config.local_rag_enabled and payload.doc_ids:
+        sources.append("local")
+
     initial_state = ResearchState(
         research_topic=payload.query,
-        sources_available=["web"] + (["local"] if payload.doc_ids else []),
+        sources_available=sources,
         selected_doc_ids=payload.doc_ids or [],
         token_tracker=TokenTracker(),
         conversation_history=[{"role": "user", "content": payload.query}],
@@ -109,11 +114,7 @@ async def upload_document(file: UploadFile = File(...)):
 
 @router.get("/documents", response_model=list[DocumentInfo])
 async def list_documents():
-    # NOTE: vector_store.py has no "list all doc_ids with metadata" helper yet —
-    # only get_active_doc_id() (single-doc) and get_all_chunks(doc_id) (needs a
-    # doc_id already). Returns [] for now; needs a real list_all_documents()
-    # added to vector_store.py to enumerate distinct doc_ids + their metadata.
-    return []
+    return [DocumentInfo(**d) for d in list_all_documents()]
 
 
 @router.delete("/documents/{doc_id}", response_model=DeleteResponse)
@@ -126,6 +127,6 @@ async def delete_document(doc_id: str):
 
 @router.get("/upload/status/{doc_id}")
 async def upload_status(doc_id: str):
-    # Upload is synchronous above (no background job), so status is always
-    # "done" by the time this could be called. Kept for frontend compatibility.
+    # Upload is synchronous above (no background job) — status is always
+    # "done" if this is reachable. Kept only for frontend compatibility.
     return {"doc_id": doc_id, "status": "done"}

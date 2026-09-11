@@ -23,6 +23,7 @@ export default function App() {
   // --- Document / RAG State ---
   const [docs, setDocs] = useState([]);
   const [selectedDocId, setSelectedDocId] = useState(null);
+  const [sourceMode, setSourceMode] = useState("web");
   const [showUploader, setShowUploader] = useState(false);
 
   useEffect(() => {
@@ -43,10 +44,15 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, [newChat]);
 
-  // Pass sources array and selected doc IDs to run() based on uploaded docs
   const handleSubmit = (topic) => {
-    const sources = docs.length > 0 ? ["web", "local"] : ["web"];
-    run(topic, activeSession?.id, sources, selectedDocId ? [selectedDocId] : []);
+    const sources = sourceMode === "hybrid" ? ["web", "local"] : [sourceMode];
+    run(
+      topic,
+      activeSession?.id,
+      sources,
+      selectedDocId ? [selectedDocId] : [],
+      sourceMode
+    );
   };
 
   return (
@@ -97,7 +103,11 @@ export default function App() {
           <div className="relative max-w-3xl mx-auto px-6 py-8 min-h-full flex flex-col">
             {!activeSession && (
               <div className="flex-1 flex items-center justify-center">
-                <EmptyState onSubmit={handleSubmit} />
+                <EmptyState
+                  onSubmit={handleSubmit}
+                  sourceMode={sourceMode}
+                  onSourceModeChange={setSourceMode}
+                />
               </div>
             )}
 
@@ -113,6 +123,7 @@ export default function App() {
         {activeSession && (
           <div className="border-t border-white/[0.05] bg-canvas/90 backdrop-blur-md px-6 py-4">
             <div className="max-w-3xl mx-auto">
+              <SourceModeSelector mode={sourceMode} onChange={setSourceMode} />
               <QueryInput onSubmit={handleSubmit} disabled={isRunning} />
             </div>
           </div>
@@ -140,7 +151,7 @@ function AmbientGlow() {
   );
 }
 
-function EmptyState({ onSubmit }) {
+function EmptyState({ onSubmit, sourceMode, onSourceModeChange }) {
   return (
     <div className="flex flex-col items-center text-center gap-7 w-full animate-fade-in-up">
       <style>{`
@@ -185,8 +196,38 @@ function EmptyState({ onSubmit }) {
       </div>
 
       <div className="w-full max-w-xl">
+        <SourceModeSelector mode={sourceMode} onChange={onSourceModeChange} />
         <QueryInput onSubmit={onSubmit} disabled={false} />
       </div>
+    </div>
+  );
+}
+
+function SourceModeSelector({ mode, onChange }) {
+  const options = [
+    ["web", "Web"],
+    ["local", "Document"],
+    ["hybrid", "Web + document"],
+  ];
+
+  return (
+    <div className="flex justify-center gap-1 mb-3" role="radiogroup" aria-label="Research source">
+      {options.map(([value, label]) => (
+        <button
+          key={value}
+          type="button"
+          role="radio"
+          aria-checked={mode === value}
+          onClick={() => onChange(value)}
+          className={`rounded-full px-3 py-1.5 text-xs transition ${
+            mode === value
+              ? "bg-primary text-white"
+              : "bg-surface-2 text-ink-muted hover:text-ink"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
     </div>
   );
 }

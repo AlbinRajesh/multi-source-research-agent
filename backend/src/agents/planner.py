@@ -130,6 +130,18 @@ class PlannerAgent:
                     f"query_cap={query_cap} (LLM proposed {len(result['search_queries'])})"
                 )
 
+                requested_mode = state.source_mode
+                mode = {
+                    "web": "full_web",
+                    "local": "fast_local",
+                    "hybrid": "hybrid",
+                }[requested_mode]
+                source_hints = {
+                    "web": "web",
+                    "local": "local",
+                    "hybrid": "both",
+                }
+
                 plan = ResearchPlan(
                     topic=result["topic"],
                     objectives=result["objectives"][:5],
@@ -137,13 +149,13 @@ class PlannerAgent:
                         SearchQuery(
                             query=sq["query"],
                             purpose=sq["purpose"],
-                            source_hint=sq.get("source_hint", "web"),
+                            source_hint=source_hints[requested_mode],
                         )
                         for sq in result["search_queries"][:query_cap]
                     ],
                     report_outline=result["report_outline"][: config.max_report_sections],
                     complexity=complexity,
-                    mode=result.get("mode", "hybrid"),
+                    mode=mode,
                 )
 
                 return {

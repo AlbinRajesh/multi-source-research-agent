@@ -41,7 +41,11 @@ class FastLocalAgent:
             return {"route_decision": "escalate"}
 
         query = state.research_topic
-        results = await self.local_provider.search(query, max_results=5)
+        results = await self.local_provider.search(
+            query,
+            max_results=5,
+            doc_ids=state.selected_doc_ids or None,
+        )
 
         if not results or len(results[0].content or "") < 50:
             logger.info("[fast_local] empty/weak local results — escalating to full pipeline")

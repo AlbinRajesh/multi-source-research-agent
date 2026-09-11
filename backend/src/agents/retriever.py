@@ -47,8 +47,26 @@ class RetrieverAgent:
         if not state.plan:
             return {"error": "No plan available"}
 
-        web_queries = [q for q in state.plan.search_queries if q.source_hint in ("web", "both")]
-        local_queries = [q for q in state.plan.search_queries if q.source_hint in ("local", "both")]
+        if state.plan.mode == "full_web":
+            web_queries = list(state.plan.search_queries)
+            local_queries = []
+        elif state.plan.mode == "fast_local":
+            web_queries = []
+            local_queries = list(state.plan.search_queries)
+        else:
+            web_queries = [
+                q for q in state.plan.search_queries if q.source_hint in ("web", "both")
+            ]
+            local_queries = [
+                q for q in state.plan.search_queries if q.source_hint in ("local", "both")
+            ]
+
+        logger.info(
+            "[source_routing] mode=%s web_queries=%d local_queries=%d",
+            state.plan.mode,
+            len(web_queries),
+            len(local_queries),
+        )
 
         try:
             semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_SEARCHES)

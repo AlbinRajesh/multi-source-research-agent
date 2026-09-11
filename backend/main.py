@@ -1,7 +1,7 @@
 import logging
 import json
 import uuid
-from typing import Optional, List, AsyncGenerator
+from typing import Optional, List, AsyncGenerator, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +9,6 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from langgraph.checkpoint.memory import MemorySaver
 
-from src.rag.vector_store import has_any_documents
 from src.graph import create_sqlite_checkpointer, run_research, run_research_with_persistence, resume_research, create_research_graph
 from src.state import ResearchState
 from src.exceptions import DeepResearchError, ResearchAgentError
@@ -47,12 +46,24 @@ class ResearchRequest(BaseModel):
     topic: str
     sources: Optional[List[str]] = None
     selected_doc_ids: Optional[List[str]] = None
+    source_mode: Optional[Literal["web", "local", "hybrid"]] = None
     persist: bool = False
     thread_id: Optional[str] = None
 
 
 class ResumeRequest(BaseModel):
     thread_id: str
+
+
+def _resolve_source_mode(req: ResearchRequest) -> Literal["web", "local", "hybrid"]:
+    if req.source_mode:
+        return req.source_mode
+    requested_sources = set(req.sources or ["web"])
+    if requested_sources == {"local"}:
+        return "local"
+    if {"web", "local"}.issubset(requested_sources):
+        return "hybrid"
+    return "web"
 
 
 @app.on_event("startup")
@@ -78,9 +89,8 @@ async def research(req: ResearchRequest):
     tid = req.thread_id or f"research-{uuid.uuid4().hex[:8]}"
     run_config = {"configurable": {"thread_id": tid}}
 
-    sources = req.sources or ["web"]
-    if "local" not in sources and has_any_documents():
-        sources = sources + ["local"]
+    source_mode = _resolve_source_mode(req)
+    sources = ["web", "local"] if source_mode == "hybrid" else [source_mode]
 
     try:
         if req.persist:
@@ -95,6 +105,7 @@ async def research(req: ResearchRequest):
                 initial_state = ResearchState(
                     research_topic=req.topic,
                     sources_available=sources,
+                    source_mode=source_mode,
                     selected_doc_ids=req.selected_doc_ids or [],
                     conversation_history=prior_history + [{"role": "user", "content": req.topic}],
                 )
@@ -108,6 +119,7 @@ async def research(req: ResearchRequest):
             initial_state = ResearchState(
                 research_topic=req.topic,
                 sources_available=sources,
+                source_mode=source_mode,
                 selected_doc_ids=req.selected_doc_ids or [],
                 conversation_history=prior_history + [{"role": "user", "content": req.topic}],
             )
@@ -138,13 +150,13 @@ async def research_stream(req: ResearchRequest):
     if existing and existing.values:
         prior_history = existing.values.get("conversation_history", [])
 
-    sources = req.sources or ["web"]
-    if "local" not in sources and has_any_documents():
-        sources = sources + ["local"]
+    source_mode = _resolve_source_mode(req)
+    sources = ["web", "local"] if source_mode == "hybrid" else [source_mode]
 
     initial_state = ResearchState(
         research_topic=req.topic,
         sources_available=sources,
+        source_mode=source_mode,
         selected_doc_ids=req.selected_doc_ids or [],
         conversation_history=prior_history + [{"role": "user", "content": req.topic}],
     )

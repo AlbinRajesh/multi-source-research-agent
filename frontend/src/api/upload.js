@@ -43,6 +43,9 @@ export async function deleteDocument(docId) {
 
 export async function getUploadStatus(docId) {
   const res = await fetch(`${API_BASE}/upload/status/${docId}`);
-  if (!res.ok) throw new Error(`Status check failed (${res.status})`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Status check failed (${res.status})`);
+  }
   return res.json();
 }

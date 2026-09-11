@@ -93,6 +93,7 @@ class ResearchState(BaseModel):
     conversation_history: List[Dict[str, str]] = Field(default_factory=list)  # [{"role": "user"/"assistant", "content": "..."}]
     # Sources available this run (Phase 1: web only; Phase 2 adds "local")
     sources_available: List[Literal["web", "local"]] = Field(default_factory=lambda: ["web"])
+    source_mode: Literal["web", "local", "hybrid"] = "web"
 
     # Planning
     plan: Optional[ResearchPlan] = Field(default=None)

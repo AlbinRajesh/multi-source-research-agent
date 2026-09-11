@@ -1,10 +1,23 @@
 const API_BASE = "http://localhost:8001"; // matches your main.py docstring
 
-export async function streamResearch(topic, threadId, sources, { onNode, onDone, onError }) {
+export async function streamResearch(
+  topic,
+  threadId,
+  sources,
+  selectedDocIds = [],
+  sourceMode = "web",
+  { onNode, onDone, onError }
+) {
   const res = await fetch(`${API_BASE}/research/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ topic, sources: sources ?? ["web"], thread_id: threadId }),
+    body: JSON.stringify({
+      topic,
+      sources: sources ?? ["web"],
+      selected_doc_ids: selectedDocIds,
+      source_mode: sourceMode,
+      thread_id: threadId,
+    }),
   });
 
   const reader = res.body.getReader();
