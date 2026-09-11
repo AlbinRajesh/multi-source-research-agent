@@ -106,6 +106,11 @@ Two common ways to provide configuration:
 
 Make sure the configuration code maps the environment variable into `config.tavily_api_key`. If there is a `backend/src/config.py`, adapt it to read env vars or document how to set `config` fields.
 
+The planner and claim-extraction stages use Gemini independently of the other
+model providers. Set `GOOGLE_API_KEY` in `backend/.env`, with optional
+overrides for `GEMINI_PLANNER_MODEL` and `GEMINI_CLAIM_EXTRACTION_MODEL`.
+These settings do not change the providers used by the other stages.
+
 ---
 
 ## Example: the Tavily provider

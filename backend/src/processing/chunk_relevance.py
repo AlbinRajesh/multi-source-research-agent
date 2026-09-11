@@ -9,6 +9,7 @@ it only cares about each chunk's relative position in each ranking,
 not the raw score magnitude.
 """
 import logging
+import time
 from typing import List, Tuple, Optional
 
 import numpy as np
@@ -32,6 +33,14 @@ def _rrf_scores(dense_ranks: dict, sparse_ranks: dict, n: int) -> List[float]:
     return scores
 
 
+def _chunk_id(r: SearchResult) -> str:
+    """Compact identifier for logging — avoids dumping full chunk text."""
+    meta = getattr(r, "metadata", None) or {}
+    if meta.get("doc_id"):
+        return f"local://{meta['doc_id']}/{meta.get('chunk_index', '?')}"
+    return getattr(r, "url", "unknown")
+
+
 def filter_chunks_by_relevance(
     results: List[SearchResult],
     topic: str,
@@ -47,10 +56,17 @@ def filter_chunks_by_relevance(
     texts = [r.content or r.snippet or "" for r in results]
 
     # --- Dense (semantic) ranking ---
+    t0 = time.perf_counter()
     try:
         topic_vec = embed_query(topic)
+        t1 = time.perf_counter()
         chunk_vecs = embed_texts(texts)
+        t2 = time.perf_counter()
         dense_scores = chunk_vecs @ topic_vec  # cosine sim, vectors already normalized
+        logger.info(
+            f"[chunk_relevance_timing] embed_query={t1-t0:.3f}s "
+            f"embed_texts={t2-t1:.3f}s"
+        )
     except EmbeddingError as e:
         logger.warning(f"[chunk_relevance] dense scoring failed, falling back to sparse-only: {e}")
         dense_scores = np.zeros(n)
@@ -60,10 +76,12 @@ def filter_chunks_by_relevance(
 
     # --- Sparse (keyword) ranking — ephemeral BM25 over THIS batch only,
     # not the persisted document index (this is candidate re-ranking, not retrieval). ---
+    t3 = time.perf_counter()
     tokenized = [_tokenize(t) for t in texts]
     try:
         bm25 = BM25Okapi(tokenized)
         sparse_scores = bm25.get_scores(_tokenize(topic))
+        logger.info(f"[chunk_relevance_timing] bm25={time.perf_counter()-t3:.3f}s")
     except Exception as e:
         logger.warning(f"[chunk_relevance] sparse scoring failed, falling back to dense-only: {e}")
         sparse_scores = np.zeros(n)
@@ -89,7 +107,10 @@ def filter_chunks_by_relevance(
     kept_results = [r for r, _ in kept]
     scores = [s for _, s in ranked]
     logger.info(
-        f"[chunk_relevance] kept {len(kept_results)}/{n} chunks "
+        f"[chunk_relevance] candidates={n} dense_scored={len(dense_ranks)} "
+        f"sparse_scored={len(sparse_ranks)} kept={len(kept_results)} "
         f"(keep_ratio={keep_ratio}, min_survivors={min_survivors}, global_budget={global_budget})"
     )
+    logger.info(f"[chunk_relevance] kept_ids={[_chunk_id(r) for r in kept_results]}")
+    logger.info(f"[chunk_relevance] dropped_ids={[_chunk_id(r) for r, _ in dropped]}")
     return kept_results, scores

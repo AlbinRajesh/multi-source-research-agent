@@ -1,6 +1,7 @@
 """Configuration for the Research & Search Agent."""
 from pydantic_settings import BaseSettings
 from typing import Optional
+import logging
 
 COMPLEXITY_LIMITS = {
     "simple":   {"max_queries": 2, "max_results_per_query": 3},
@@ -22,6 +23,8 @@ class Settings(BaseSettings):
     groq_api_key: Optional[str] = None
     groq_base_url: str = "https://api.groq.com/openai/v1"
     claim_extraction_model: str = "qwen2.5:3b-instruct"
+    gemini_planner_model: str = "gemini-2.5-flash-lite"
+    gemini_claim_extraction_model: str = "gemini-2.5-flash-lite"
 
     # Search
     search_provider: str = "tavily"         # tavily | searxng
@@ -62,3 +65,6 @@ class Settings(BaseSettings):
 
 
 config = Settings()
+logging.getLogger(__name__).info(
+    f"[startup] gemini_planner_model={config.gemini_planner_model!r}"
+)

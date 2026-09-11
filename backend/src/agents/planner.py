@@ -66,7 +66,11 @@ def _recent_conversation_context(history: list, max_turns: int = 3) -> str:
 
 class PlannerAgent:
     def __init__(self, llm=None, max_retries: int = 3):
-        self.llm = llm or get_llm(temperature=0.5)
+        self.llm = llm or get_llm(
+            temperature=0.5,
+            model_override=config.gemini_planner_model,
+            provider_override="gemini",
+        )
         self.max_retries = max_retries
         self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")
 
@@ -99,7 +103,7 @@ class PlannerAgent:
                     tracker=state.token_tracker,
                     node="plan",
                     model=self.model_name,
-                    provider=config.model_provider,
+                    provider="gemini",
                 )
 
                 logger.info(f"[plan_debug] raw parsed planner mode: {result.get('mode')!r}")

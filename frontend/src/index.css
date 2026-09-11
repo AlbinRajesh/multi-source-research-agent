@@ -3,6 +3,7 @@
 
 /* 2. Then Tailwind v4 */
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 @theme {
   /* Obsidian canvas */
