@@ -27,8 +27,13 @@ logger = logging.getLogger(__name__)
 
 
 class VerificationAgent:
-    def __init__(self, llm=None, max_concurrent: int = 4):
-        self.llm = llm or get_llm(temperature=0.0, max_tokens=1500)  # strongest model, low temp — this stage matters most
+    def __init__(self, llm=None, max_concurrent: int = 6):
+        self.llm = llm or get_llm(
+            temperature=0.0,
+            model_override=config.nvidia_verifier_model,
+            provider_override="nvidia",
+            max_tokens=1500,
+        )
         self.max_concurrent = max_concurrent
         self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")
 
@@ -81,8 +86,9 @@ class VerificationAgent:
                     tracker=state.token_tracker,
                     node="verify",
                     model=self.model_name,
-                    provider=config.model_provider,
+                    provider="nvidia",
                 )
+                    logger.info(f"[raw_length] verify source={url} chars={len(raw)}")
                     parsed = self._parse_json_array(raw)
                     for item in parsed:
                         cid = item.get("claim_id")

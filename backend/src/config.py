@@ -11,7 +11,7 @@ COMPLEXITY_LIMITS = {
 
 class Settings(BaseSettings):
     # LLM
-    model_provider: str = "ollama"          # ollama | openai | gemini | llamacpp | groq
+    model_provider: str = "ollama"          # ollama | openai | gemini | llamacpp | groq | nvidia
     model_name: str = "qwen3:8b"
     fast_model_name: str = "llama3.2:3b"    # cheap model for extraction/credibility-adjacent tasks
     summarization_model: str = "qwen3:8b"
@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     claim_extraction_model: str = "qwen2.5:3b-instruct"
     gemini_planner_model: str = "gemini-2.5-flash-lite"
     gemini_claim_extraction_model: str = "gemini-2.5-flash-lite"
+    nvidia_api_key: Optional[str] = None
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    nvidia_verifier_model: str = "openai/gpt-oss-20b"
 
     # Search
     search_provider: str = "tavily"         # tavily | searxng

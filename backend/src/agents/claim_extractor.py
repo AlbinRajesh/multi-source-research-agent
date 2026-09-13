@@ -113,6 +113,7 @@ class ClaimExtractionAgent:
                             model=self.model_name,
                             provider="gemini",
                         )
+                        logger.info(f"[raw_length] extract_claims source={doc.url} chars={len(raw)}")
                         break  # success
                     except Exception as e:
                         last_error = e

@@ -88,6 +88,18 @@ def get_llm(
                 max_tokens=max_tokens,
             )
 
+        elif provider == "nvidia":
+            if not config.nvidia_api_key:
+                raise ConfigurationError("NVIDIA_API_KEY not set")
+            logger.info(f"LLM: nvidia/{model_name}")
+            return ChatOpenAI(
+                model=model_name,
+                base_url=config.nvidia_base_url,
+                api_key=config.nvidia_api_key,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
         elif provider == "llamacpp":
             logger.info(f"LLM: llamacpp/{model_name}")
             return ChatOpenAI(
