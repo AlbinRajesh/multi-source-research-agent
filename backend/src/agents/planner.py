@@ -31,16 +31,21 @@ COMPARISON_PATTERNS = [
 
 def _deterministic_tier_floor(topic: str) -> Optional[str]:
     """Returns a forced complexity tier if the topic clearly matches a
-    pattern needing a specific tier, else None (defer to LLM judgment)."""
+    pattern needing a specific tier, else None (defer to LLM judgment).
+
+    Comparison patterns are checked first so that short comparison
+    questions (e.g. "What's the difference between X and Y?") are never
+    misclassified as simple purely because of word count.
+    """
     normalized = topic.strip().lower()
     word_count = len(normalized.split())
+    for pattern in COMPARISON_PATTERNS:
+        if re.search(pattern, normalized):
+            return "complex"
     if word_count <= 8:
         for pattern in SIMPLE_TOPIC_PATTERNS:
             if re.match(pattern, normalized):
                 return "simple"
-    for pattern in COMPARISON_PATTERNS:
-        if re.search(pattern, normalized):
-            return "complex"
     return None
 
 FORMAT_CONSTRAINT_PATTERNS = [
@@ -122,8 +127,8 @@ class PlannerAgent:
                 complexity = deterministic_floor or llm_complexity
                 if deterministic_floor and deterministic_floor != llm_complexity:
                     logger.info(
-                        f"[complexity] LLM rated '{llm_complexity}' but topic matches simple-lookup "
-                        f"pattern — overriding to 'simple'"
+                        f"[complexity] LLM rated '{llm_complexity}' but topic matches a "
+                        f"deterministic pattern — overriding to '{deterministic_floor}'"
                     )
 
                 tier = COMPLEXITY_LIMITS[complexity]

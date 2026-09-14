@@ -32,7 +32,7 @@ class VerificationAgent:
             temperature=0.0,
             model_override=config.nvidia_verifier_model,
             provider_override="nvidia",
-            max_tokens=1500,
+            max_tokens=1200,
         )
         self.max_concurrent = max_concurrent
         self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")
@@ -181,7 +181,7 @@ class VerificationAgent:
         return []
 
     @staticmethod
-    def _get_relevant_excerpt(text: str, claims: list, window: int = 2000, max_total: int = 6000) -> str:
+    def _get_relevant_excerpt(text: str, claims: list, window: int = 2000, max_total: int = 4000) -> str:
         """Pull text windows around claim-keyword matches instead of blind truncation."""
         if len(text) <= max_total:
             return text
