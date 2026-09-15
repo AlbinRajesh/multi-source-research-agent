@@ -16,7 +16,6 @@ from langchain_core.prompts import ChatPromptTemplate
 from src.state import ResearchState
 from src.prompts.router_prompt import ROUTER_SYSTEM_PROMPT, ROUTER_USER_TEMPLATE
 from src.utils.llm_factory import get_llm
-from src.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +72,8 @@ class RouterAgent:
         )
         self.chat_llm = get_llm(
             temperature=0.6,
-            model_override=config.claim_extraction_model,
-            provider_override="ollama",
+            model_override="openai/gpt-oss-120b",
+            provider_override="groq",
         )
 
     async def route(self, state: ResearchState) -> Dict[str, Any]:

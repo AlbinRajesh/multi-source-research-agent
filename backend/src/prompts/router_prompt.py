@@ -12,7 +12,7 @@ research = a request for facts, current info, explanation of a real-world
            "compare X and Y", "latest news on X").
 
 Respond with ONLY one word: casual, capability, or research
-
+ 
 Examples:
 "hi" -> casual
 "thanks!" -> casual

@@ -9,6 +9,7 @@ sentence is actually supported by the specific source text.
 import asyncio
 import json
 import logging
+import time
 from collections import defaultdict
 from typing import Dict, Any, List
 from json_repair import repair_json
@@ -76,6 +77,8 @@ class VerificationAgent:
             logger.info(f"[debug] {url} content_len={len(text)} truncated={len(text) > 6000}")
             async with semaphore:
                 try:
+                    start_time = time.perf_counter()
+                    logger.info(f"[verify_start] source={url} t={start_time:.2f}")
                     raw = await track_llm_call(
                     chain,
                     {
@@ -88,6 +91,7 @@ class VerificationAgent:
                     model=self.model_name,
                     provider="nvidia",
                 )
+                    logger.info(f"[verify_timing] source={url} elapsed={time.perf_counter() - start_time:.2f}s")
                     logger.info(f"[raw_length] verify source={url} chars={len(raw)}")
                     parsed = self._parse_json_array(raw)
                     for item in parsed:
