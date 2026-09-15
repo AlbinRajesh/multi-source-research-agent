@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     # Local RAG (Phase 2)
     local_rag_enabled: bool = False
 
+    # Summarization
+    summary_map_threshold_tokens: int = 6000   # docs under this go single-pass
+    summary_map_chunk_tokens: int = 4000       # window size per map call for larger docs
+
     # Port
     port: int = 8001
 
