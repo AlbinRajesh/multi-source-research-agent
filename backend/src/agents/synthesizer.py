@@ -7,6 +7,7 @@ from langchain_core.output_parsers import StrOutputParser
 from src.config import config
 
 from src.state import ResearchState
+import re
 from src.utils.llm_factory import get_llm
 from src.processing.citations import format_citations
 from src.prompts.synthesis_prompt import (
@@ -14,6 +15,10 @@ from src.prompts.synthesis_prompt import (
     SYNTHESIS_SIMPLE_SYSTEM_PROMPT, SYNTHESIS_SIMPLE_USER_TEMPLATE,
 )
 from metrics.token_counter import track_llm_call
+from src.processing.output_format import (
+    enforce_output_format,
+    format_instruction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +114,8 @@ class SynthesizerAgent:
 
             complexity = getattr(state.plan, "complexity", None) if state.plan else None
             use_simple = complexity in SIMPLE_COMPLEXITY_TIERS or state.force_simple_format
+            output_format = state.output_format or {"style": "default"}
+            requested_instruction = format_instruction(output_format)
 
             if use_simple:
                 logger.info(f"[synthesis_mode] complexity='{complexity}' -> simple direct-answer format")
@@ -119,6 +126,7 @@ class SynthesizerAgent:
                     "claims_block": "\n".join(claims_lines) or "(none)",
                     "unconfirmed_block": "\n".join(unconfirmed_lines) or "(none)",
                     "current_date": current_date,
+                    "format_instruction": requested_instruction,
                 }
             else:
                 logger.info(f"[synthesis_mode] complexity='{complexity}' -> structured report format")
@@ -132,6 +140,7 @@ class SynthesizerAgent:
                     "claims_block": "\n".join(claims_lines) or "(none)",
                     "unconfirmed_block": "\n".join(unconfirmed_lines) or "(none)",
                     "current_date": current_date,
+                    "format_instruction": requested_instruction,
                 }
 
             prompt = ChatPromptTemplate.from_messages(
@@ -167,13 +176,19 @@ class SynthesizerAgent:
                     )
                 }
 
+            formatted = enforce_output_format(answer, output_format)
+
+            cited_indices = {int(n) for n in re.findall(r"\[(\d+)\]", formatted["text"])}
+
             citations = format_citations(
-                usable, claim_by_id, citation_index_map, state.search_results, style="apa"
+                usable, claim_by_id, citation_index_map, state.search_results,
+                style="apa", cited_indices=cited_indices,
             )
 
             return {
-                "final_report": answer,
+                "final_report": formatted["text"],
                 "citations": citations,
+                "output_format": formatted,
                 "current_stage": "complete",
                 "iterations": state.iterations + 1,
             }

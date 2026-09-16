@@ -65,15 +65,15 @@ async def stream_research(payload: ResearchRequest):
 def _summarize(node_name: str, output: dict) -> dict:
     if node_name == "plan":
         return {"sub_queries": [q.query for q in getattr(output.get("plan"), "search_queries", [])]}
-    if node_name == "synthesize":
+    if node_name in ("synthesize", "summarize"):
         return {
             "final_answer": output.get("final_report", ""),
             "citations": output.get("citations", []),
+            "summary_format": output.get("summary_format"),
         }
     if node_name == "verify":
         return {"verified_count": len(output.get("verified_claims", []))}
     return {"keys": list(output.keys())}
-
 
 # =============================================================================
 # Document upload / list / delete

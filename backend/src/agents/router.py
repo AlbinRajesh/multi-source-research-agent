@@ -1,12 +1,11 @@
 """Router Agent — classifies input as casual chat, a capability/meta
-question about the assistant itself, or a real research request.
+question, a document-summarization request, or a real research request.
 
-Capability questions ("what can you do", "are you able to research X")
-are matched deterministically first — same pattern as the planner's
-complexity-tier floor — because a 3B local model is not reliable enough
-on its own to distinguish "are you able to research" (a question about
-the assistant) from "research the following" (an actual request). Only
-genuinely ambiguous messages fall through to the LLM classifier.
+Capability and summary intents are matched deterministically first —
+same pattern as the planner's complexity-tier floor — because a 3B
+local model is not reliable enough on its own to distinguish these
+from genuine research requests. Only genuinely ambiguous messages fall
+through to the LLM classifier.
 """
 import re
 import logging
@@ -16,7 +15,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from src.state import ResearchState
 from src.prompts.router_prompt import ROUTER_SYSTEM_PROMPT, ROUTER_USER_TEMPLATE
 from src.utils.llm_factory import get_llm
-from src.config import config
+from src.processing.output_format import parse_output_format
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +24,7 @@ CAPABILITY_PATTERNS = [
     r"\bwhat are (your|the) (features|capabilit(y|ies))\b",
     r"\bwhat features (do you have|does this have)\b",
     r"\bare you able to\b",
-    r"\bcan you (do|help with|research)\b.{0,30}$",  # short trailing clause, not "can you research X for me and give details on Y"
+    r"\bcan you (do|help with|research)\b.{0,30}$",
     r"\bhow do(es)? (you|this) work\b",
     r"\bwho are you\b",
     r"\bwhat is this (tool|app|assistant|agent)\b",
@@ -42,15 +41,50 @@ GREETING_PATTERNS = [
     r"^how are you\b",
 ]
 
+# Summarization intent — checked before capability/greeting since phrases
+# like "what is this document about" would otherwise partially match
+# capability patterns ("what is this ... about").
+SUMMARY_PATTERNS = [
+    r"\bsummar(y|ize|ise|isation|ization)\b",
+    r"\btl;?dr\b",
+    r"\bwhat (is|'s) (this|the|it) (document|doc|pdf|file|paper|report) about\b",
+    r"\bwhat('s| is) (it|this) about\b",
+    r"\bgive me (a|the) (summary|overview|gist|rundown)\b",
+    r"\bkey (points|takeaways) (of|from) (this|the)\b",
+    r"\bcan you (summarize|summarise|sum up)\b",
+]
+
+# Enterprise-grade two-tier matching vocabularies
+DOC_NOUN_PATTERN = r"\b(?:documents?|docs?|pdf|files?|papers?|reports?)\b"
+ATTACH_TERM_PATTERN = r"\b(?:attach\w*|upload\w*|select\w*)\b"
+STRICT_DOC_PHRASE_PATTERN = (
+    r"\b(?:this|the|selected|uploaded|attached)\s+"
+    r"(?:document|doc|pdf|file|paper|report)\b"
+)
+
 CAPABILITY_ANSWER = """I'm a research assistant. I search the web across multiple sources, extract factual claims, cross-check each one against the original source and against other sources, and give you back a cited report — every fact is traceable to where it came from and flagged as verified, single-source, or conflicting.
+
+I can also summarize documents you've uploaded — just ask for a summary, optionally with a length ("summarize this in 3 sentences").
 
 Ask me things like:
 - "What is [topic]"
 - "Give me details on [topic]"
 - "Compare [X] vs [Y]"
+- "Summarize this document"
 - "Latest developments in [topic]"
 
 For anything that isn't a real-world lookup, just chat with me normally."""
+
+NO_DOCUMENT_FOR_SUMMARY_MSG = (
+    "I'd be happy to summarize a document — but I don't see one selected for "
+    "this conversation. Please upload or select a document first, then ask "
+    "again."
+)
+
+
+def _is_summary_request(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(re.search(p, normalized) for p in SUMMARY_PATTERNS)
 
 
 def _deterministic_route(message: str) -> Optional[str]:
@@ -73,12 +107,49 @@ class RouterAgent:
         )
         self.chat_llm = get_llm(
             temperature=0.6,
-            model_override=config.claim_extraction_model,
-            provider_override="ollama",
+            model_override="openai/gpt-oss-120b",
+            provider_override="groq",
         )
 
     async def route(self, state: ResearchState) -> Dict[str, Any]:
         topic = state.research_topic
+        output_format = parse_output_format(topic)
+
+        if _is_summary_request(topic):
+            normalized_topic = topic.lower()
+
+            has_doc_noun = bool(re.search(DOC_NOUN_PATTERN, normalized_topic))
+            has_attach_term = bool(re.search(ATTACH_TERM_PATTERN, normalized_topic))
+            strict_phrase = bool(re.search(STRICT_DOC_PHRASE_PATTERN, normalized_topic))
+
+            if state.selected_doc_ids:
+                # Loose matching is safe because a document is actually present
+                document_reference = has_doc_noun or has_attach_term or strict_phrase
+            else:
+                # Strict matching required to avoid false positives on web queries
+                document_reference = strict_phrase or has_attach_term
+
+            # Fallback for references like "summarize this / it"
+            document_reference = document_reference or bool(
+                state.selected_doc_ids
+                and re.search(r"\b(?:summarize|summarise|summary|overview|tl;?dr)\b.*\b(?:this|it)\b", normalized_topic)
+            )
+
+            if document_reference and not state.selected_doc_ids:
+                logger.info(f"[router] summary intent, no document selected: {topic!r}")
+                result = self._casual_result(NO_DOCUMENT_FOR_SUMMARY_MSG)
+                result["output_format"] = output_format
+                return result
+
+            if document_reference and state.selected_doc_ids:
+                logger.info(f"[router] deterministic match -> summarize: {topic!r}")
+                return {
+                    "is_casual": False,
+                    "route_decision": "summarize",
+                    "current_stage": "summarizing",
+                    "output_format": output_format,
+                }
+
         forced = _deterministic_route(topic)
 
         if forced == "capability":
@@ -110,7 +181,12 @@ class RouterAgent:
             reply = await self._casual_reply(topic)
             return self._casual_result(reply)
 
-        return {"is_casual": False, "current_stage": "planning"}
+        return {
+            "is_casual": False,
+            "current_stage": "planning",
+            "route_decision": "plan",
+            "output_format": output_format,
+        }
 
     def _casual_result(self, reply: str) -> Dict[str, Any]:
         return {

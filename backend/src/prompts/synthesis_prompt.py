@@ -48,10 +48,11 @@ _SYNTHESIS_HARD_RULES = """## Hard rules
   say so plainly in one sentence — do not pad with speculation.
 - When the topic involves comparing two or more items/entities across shared
   attributes (specs, features, timelines, pricing, etc.), use a markdown
-  table instead of prose paragraphs. Table headers = item names, rows =
-  attributes. Still include [n] citation markers inside table cells where
-  applicable."""
-
+  table instead of prose paragraphs, UNLESS the user-requested format below
+  explicitly asks for a specific number of points per item — in that case,
+  follow the requested format's structure exactly instead of a table.
+  Table headers = item names, rows = attributes. Still include [n] citation
+  markers inside table cells where applicable."""
 
 # =============================================================================
 # SIMPLE mode — direct answer, no forced structure
@@ -69,6 +70,7 @@ assumptions for anything time-sensitive.
 - Write 1-4 sentences of plain prose. No markdown headers, no "Executive
   Summary" label, no forced section breakdown, no References list —
   citations are inline only.
+- Follow this user-requested format exactly: {{format_instruction}}
 - Answer the question as directly as a knowledgeable person would in
   conversation: lead with the direct answer, add supporting detail only
   if it's directly relevant.
@@ -88,7 +90,9 @@ relevant, and clearly flag as unconfirmed — never treat as fact):
 {unconfirmed_block}
 
 Answer the question directly now, in plain prose, using [n] citation
-markers matching the indices given."""
+markers matching the indices given.
+
+Requested format: {format_instruction}"""
 
 
 # =============================================================================
@@ -137,6 +141,8 @@ coverage gaps as their own section.
 
 End the answer after the last section that has real content. Do not add
 anything after it.
+
+User-requested format: {{format_instruction}}
 
 ## What NOT to do
 - Do not write a single undifferentiated block of text — every objective must have its own clear section.

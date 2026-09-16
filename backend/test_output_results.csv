@@ -1,0 +1,11 @@
+question,answer_or_observed_result,route_decision,output_format,status
+Summarize this in 4 points,summarize,summarize,"{""count"": 4, ""entities"": [], ""exact"": true, ""instruction"": ""Use exactly 4 bullet points."", ""per_entity"": false, ""style"": ""bullets""}",passed
+Summarize this PDF,"I'd be happy to summarize a document — but I don't see one selected for this conversation. Please upload or select a document first, then ask again.",,"{""exact"": false, ""instruction"": ""Use a clear answer format."", ""style"": ""default""}",passed
+Summarize this in 4 points,"- AAA
+- BBB
+- CCC
+- DDD",,"{""count"": 4, ""exact"": true, ""style"": ""bullets""}",passed
+Give me 5 points about quantum computing,plan,plan,"{""count"": 5, ""entities"": [], ""exact"": true, ""instruction"": ""Use exactly 5 bullet points."", ""per_entity"": false, ""style"": ""bullets""}",passed
+What is the difference between X and Y in 2 points each?,plan,plan,"{""count"": 2, ""entities"": [""X"", ""Y""], ""exact"": true, ""instruction"": ""This is a comparison between exactly these items: X, Y. Do NOT use a markdown table for this response. Instead, write one clearly labeled subsection per item (X, Y), and give exactly 2 bullet points under each. Every listed item must appear \u2014 do not omit any of them."", ""per_entity"": true, ""style"": ""comparison""}",passed
+Tell me about X in 1 sentence,plan,plan,"{""count"": 1, ""exact"": true, ""instruction"": ""Write exactly 1 sentence(s), no more and no less."", ""style"": ""sentences""}",passed
+Summarize quantum computing in 4 points,plan,plan,"{""count"": 4, ""entities"": [], ""exact"": true, ""instruction"": ""Use exactly 4 bullet points."", ""per_entity"": false, ""style"": ""bullets""}",passed

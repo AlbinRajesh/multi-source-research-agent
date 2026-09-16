@@ -1,6 +1,6 @@
 """Fast-path agent for simple local-only queries — skips claim extraction
 and Groq verification. Answers directly from top reranked local chunks
-via a cheap Ollama call. Falls back to the full pipeline if local
+via the configured Groq model. Falls back to the full pipeline if local
 retrieval is empty or too weak to trust."""
 import logging
 from typing import Dict, Any
@@ -11,7 +11,6 @@ from langchain_core.output_parsers import StrOutputParser
 from src.state import ResearchState
 from src.search_providers.local_rag_provider import LocalRAGProvider
 from src.utils.llm_factory import get_llm
-from src.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +28,8 @@ class FastLocalAgent:
     def __init__(self, llm=None, local_provider=None):
         self.llm = llm or get_llm(
             temperature=0.0,
-            model_override=config.claim_extraction_model,
-            provider_override="ollama",
+            model_override="openai/gpt-oss-120b",
+            provider_override="groq",
             max_tokens=800,
         )
         self.local_provider = local_provider or LocalRAGProvider()

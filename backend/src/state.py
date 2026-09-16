@@ -100,6 +100,7 @@ class ResearchState(BaseModel):
 
     is_casual: bool = Field(default=False)
     force_simple_format: bool = Field(default=False)
+    output_format: Dict[str, Any] = Field(default_factory=dict)
 
     # Search
     search_results: List[SearchResult] = Field(default_factory=list)
@@ -108,7 +109,7 @@ class ResearchState(BaseModel):
 
     # Added Workflow Tracking Fields
     processed_result_indices: List[int] = Field(default_factory=list)
-    route_decision: Optional[Literal["search", "synthesize", "plan", "refine_search", "escalate", "done"]] = Field(default=None)
+    route_decision: Optional[Literal["search", "synthesize", "plan", "refine_search", "escalate", "done", "summarize"]] = Field(default=None)
 
 
     # Claim extraction + verification (our added stages)
@@ -133,8 +134,8 @@ class ResearchState(BaseModel):
 
     # Workflow control
     current_stage: Literal[
-        "planning", "searching", "extracting_claims", "verifying",
-        "synthesizing", "reporting", "complete"
+        "planning", "searching", "summarizing", "extracting_claims",
+        "verifying", "synthesizing", "reporting", "complete"
     ] = Field(default="planning")
     error: Optional[str] = Field(default=None)
     iterations: int = Field(default=0)

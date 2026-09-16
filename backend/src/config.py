@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     model_provider: str = "ollama"          # ollama | openai | gemini | llamacpp | groq | nvidia
     model_name: str = "qwen3:8b"
     fast_model_name: str = "llama3.2:3b"    # cheap model for extraction/credibility-adjacent tasks
-    summarization_model: str = "qwen3:8b"
+    summarization_model: str = "openai/gpt-oss-120b"
     ollama_base_url: str = "http://localhost:11434"
     openai_api_key: Optional[str] = None
     openai_base_url: str = "https://api.openai.com"
@@ -59,6 +59,11 @@ class Settings(BaseSettings):
 
     # Local RAG (Phase 2)
     local_rag_enabled: bool = False
+
+    # Summarization
+    summary_map_threshold_tokens: int = 6000   # docs under this go single-pass
+    summary_map_chunk_tokens: int = 4000       # window size per map call for larger docs
+    summary_max_concurrent_map_calls: int = 2  # tune for provider token limits
 
     # Port
     port: int = 8001

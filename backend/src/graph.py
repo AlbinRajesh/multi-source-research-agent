@@ -28,6 +28,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from src.state import ResearchState, SearchQuery    
 from src.agents.planner import PlannerAgent
+from src.agents.summarizer import SummarizerAgent
 from src.agents.retriever import RetrieverAgent
 from src.agents.claim_extractor import ClaimExtractionAgent
 from src.agents.verifier import VerificationAgent
@@ -77,7 +78,6 @@ async def create_sqlite_checkpointer():
 # =============================================================================
 # Graph construction
 # =============================================================================
-
 def create_research_graph(checkpointer=None):
     router = RouterAgent()
     planner = PlannerAgent()
@@ -86,6 +86,7 @@ def create_research_graph(checkpointer=None):
     verifier = VerificationAgent()
     synthesizer = SynthesizerAgent()
     fast_local_agent = FastLocalAgent()
+    summarizer_agent = SummarizerAgent()  # <-- Added
 
     workflow = StateGraph(ResearchState)
 
@@ -100,11 +101,16 @@ def create_research_graph(checkpointer=None):
     workflow.add_node("check_retry", check_retry)
     workflow.add_node("refine_search", timed_node("refine_search")(refine_search_queries))
     workflow.add_node("synthesize", timed_node("synthesize")(synthesizer.synthesize))
+    workflow.add_node("summarize", timed_node("summarize")(summarizer_agent.summarize))  # <-- Added
 
     workflow.add_edge(START, "route")
 
     def after_route(state: ResearchState) -> str:
-        return END if state.is_casual else "plan"
+        if state.is_casual:
+            return END
+        if state.route_decision == "summarize":
+            return "summarize"
+        return "plan"
 
     def after_plan(state: ResearchState) -> str:
         if state.error or not state.plan or not state.plan.search_queries:
@@ -120,7 +126,11 @@ def create_research_graph(checkpointer=None):
             return END
         return "chunk_relevance_filter"
 
-    workflow.add_conditional_edges("route", after_route, {"plan": "plan", END: END})
+    workflow.add_conditional_edges(
+        "route", after_route, {"plan": "plan", "summarize": "summarize", END: END}
+    )
+    workflow.add_edge("summarize", END)
+    
     workflow.add_conditional_edges("plan", after_plan, {"search": "search", "fast_local_answer": "fast_local_answer", END: END})
     workflow.add_conditional_edges(
         "fast_local_answer",
@@ -145,7 +155,6 @@ def create_research_graph(checkpointer=None):
     workflow.add_edge("synthesize", END)
 
     return workflow.compile(checkpointer=checkpointer)
-
 # =============================================================================
 # Relevance Filter Node & Routing Edges
 # =============================================================================
