@@ -93,7 +93,7 @@ export function useResearchStream() {
                 };
               }
 
-              if (data.node === "synthesize") {
+              if (data.node === "synthesize" || data.node === "summarize") {
                 if (data.error) {
                   return { nodeLog, error: data.error, status: "error" };
                 }

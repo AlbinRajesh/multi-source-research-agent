@@ -69,6 +69,7 @@ def _summarize(node_name: str, output: dict) -> dict:
         return {
             "final_answer": output.get("final_report", ""),
             "citations": output.get("citations", []),
+            "summary_format": output.get("summary_format"),
         }
     if node_name == "verify":
         return {"verified_count": len(output.get("verified_claims", []))}
