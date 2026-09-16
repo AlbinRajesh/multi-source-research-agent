@@ -15,6 +15,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from src.state import ResearchState
 from src.prompts.router_prompt import ROUTER_SYSTEM_PROMPT, ROUTER_USER_TEMPLATE
 from src.utils.llm_factory import get_llm
+from src.processing.output_format import parse_output_format
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,14 @@ SUMMARY_PATTERNS = [
     r"\bkey (points|takeaways) (of|from) (this|the)\b",
     r"\bcan you (summarize|summarise|sum up)\b",
 ]
+
+# Enterprise-grade two-tier matching vocabularies
+DOC_NOUN_PATTERN = r"\b(?:documents?|docs?|pdf|files?|papers?|reports?)\b"
+ATTACH_TERM_PATTERN = r"\b(?:attach\w*|upload\w*|select\w*)\b"
+STRICT_DOC_PHRASE_PATTERN = (
+    r"\b(?:this|the|selected|uploaded|attached)\s+"
+    r"(?:document|doc|pdf|file|paper|report)\b"
+)
 
 CAPABILITY_ANSWER = """I'm a research assistant. I search the web across multiple sources, extract factual claims, cross-check each one against the original source and against other sources, and give you back a cited report — every fact is traceable to where it came from and flagged as verified, single-source, or conflicting.
 
@@ -104,17 +113,42 @@ class RouterAgent:
 
     async def route(self, state: ResearchState) -> Dict[str, Any]:
         topic = state.research_topic
+        output_format = parse_output_format(topic)
 
         if _is_summary_request(topic):
-            if not state.selected_doc_ids:
+            normalized_topic = topic.lower()
+
+            has_doc_noun = bool(re.search(DOC_NOUN_PATTERN, normalized_topic))
+            has_attach_term = bool(re.search(ATTACH_TERM_PATTERN, normalized_topic))
+            strict_phrase = bool(re.search(STRICT_DOC_PHRASE_PATTERN, normalized_topic))
+
+            if state.selected_doc_ids:
+                # Loose matching is safe because a document is actually present
+                document_reference = has_doc_noun or has_attach_term or strict_phrase
+            else:
+                # Strict matching required to avoid false positives on web queries
+                document_reference = strict_phrase or has_attach_term
+
+            # Fallback for references like "summarize this / it"
+            document_reference = document_reference or bool(
+                state.selected_doc_ids
+                and re.search(r"\b(?:summarize|summarise|summary|overview|tl;?dr)\b.*\b(?:this|it)\b", normalized_topic)
+            )
+
+            if document_reference and not state.selected_doc_ids:
                 logger.info(f"[router] summary intent, no document selected: {topic!r}")
-                return self._casual_result(NO_DOCUMENT_FOR_SUMMARY_MSG)
-            logger.info(f"[router] deterministic match -> summarize: {topic!r}")
-            return {
-                "is_casual": False,
-                "route_decision": "summarize",
-                "current_stage": "summarizing",
-            }
+                result = self._casual_result(NO_DOCUMENT_FOR_SUMMARY_MSG)
+                result["output_format"] = output_format
+                return result
+
+            if document_reference and state.selected_doc_ids:
+                logger.info(f"[router] deterministic match -> summarize: {topic!r}")
+                return {
+                    "is_casual": False,
+                    "route_decision": "summarize",
+                    "current_stage": "summarizing",
+                    "output_format": output_format,
+                }
 
         forced = _deterministic_route(topic)
 
@@ -147,7 +181,12 @@ class RouterAgent:
             reply = await self._casual_reply(topic)
             return self._casual_result(reply)
 
-        return {"is_casual": False, "current_stage": "planning", "route_decision": "plan"}
+        return {
+            "is_casual": False,
+            "current_stage": "planning",
+            "route_decision": "plan",
+            "output_format": output_format,
+        }
 
     def _casual_result(self, reply: str) -> Dict[str, Any]:
         return {

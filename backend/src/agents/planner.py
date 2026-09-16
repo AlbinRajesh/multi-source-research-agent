@@ -166,7 +166,10 @@ class PlannerAgent:
                     "plan": plan,
                     "current_stage": "searching",
                     "iterations": state.iterations + 1,
-                    "force_simple_format": _has_explicit_format_constraint(state.research_topic),
+                    "force_simple_format": (
+                        state.output_format.get("style", "default") not in {"default", "comparison"}
+                        or _has_explicit_format_constraint(state.research_topic)
+                    ),
                 }
 
             except Exception as e:

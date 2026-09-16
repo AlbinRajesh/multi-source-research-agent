@@ -29,39 +29,144 @@ _WORD_NUMS = {
 }
 
 
-def _parse_length_constraint(query: str) -> str:
+def _number(value: str) -> int:
+    word_value = _WORD_NUMS.get(value.lower())
+    return word_value if word_value is not None else int(value)
+
+
+def _parse_length_constraint(query: str) -> Dict[str, Any]:
     """Deterministic regex match — same pattern as the planner's
     format-constraint detection. An LLM asked to 'guess' the requested
     length is exactly the kind of instruction that silently drifts, so
     this is matched directly instead of relying on prompt-following."""
     q = query.strip().lower()
 
-    m = re.search(r"\bin\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+sentences?\b", q)
-    if m:
-        n = m.group(1)
-        n = _WORD_NUMS.get(n, n)
-        return f"Exactly {n} sentence{'s' if str(n) != '1' else ''}. No more, no less."
+    number = r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten)"
 
-    m = re.search(r"\bin\s+(\d+)\s+words?\b", q)
+    m = re.search(rf"\b(?:in|with|using|exactly)\s+{number}\s+sentences?\b", q)
     if m:
-        return f"Approximately {m.group(1)} words."
+        n = _number(m.group(1))
+        return {
+            "instruction": f"Exactly {n} sentence{'s' if n != 1 else ''}. No more, no less.",
+            "kind": "sentences",
+            "count": n,
+        }
 
-    m = re.search(r"\bin\s+(\d+|one|two|three|four|five)\s+(bullet\s*points?|points?)\b", q)
+    m = re.search(rf"\b(?:in|with|using|exactly|under|below|within)\s+(\d+)\s+words?\b", q)
     if m:
-        n = m.group(1)
-        n = _WORD_NUMS.get(n, n)
-        return f"Exactly {n} bullet points."
+        n = int(m.group(1))
+        is_limit = bool(re.search(r"\b(?:under|below|within)\b", m.group(0)))
+        return {
+            "instruction": f"{'At most' if is_limit else 'Approximately'} {n} words.",
+            "kind": "words",
+            "count": n,
+            "max_words": n,
+        }
+
+    m = re.search(
+        rf"\b(?:in|with|using|exactly|give me)?\s*{number}\s+"
+        r"(?:bullet\s*points?|points?|takeaways?|key\s+points?)\b",
+        q,
+    )
+    if m:
+        n = _number(m.group(1))
+        return {
+            "instruction": f"Exactly {n} bullet points.",
+            "kind": "bullets",
+            "count": n,
+        }
+
+    if re.search(r"\b(?:one|a single|1)\s+paragraph\b", q):
+        return {
+            "instruction": "Write exactly one paragraph.",
+            "kind": "paragraph",
+        }
 
     if re.search(r"\b(one[- ]liner|tl;?dr|very short|super short)\b", q):
-        return "1-2 sentences maximum."
+        return {
+            "instruction": "1-2 sentences maximum.",
+            "kind": "sentences",
+            "max_sentences": 2,
+        }
 
     if re.search(r"\b(brief|short|concise|quick)\b", q):
-        return "A brief summary, 3-5 sentences."
+        return {
+            "instruction": "A brief summary, 3-5 sentences.",
+            "kind": "sentences",
+            "max_sentences": 5,
+        }
 
     if re.search(r"\b(detailed|long|comprehensive|in-depth|thorough)\b", q):
-        return "A detailed summary, 4-6 paragraphs, covering all major points."
+        return {
+            "instruction": "A detailed summary, 4-6 paragraphs, covering all major points.",
+            "kind": "paragraph",
+        }
 
-    return "A clear, well-organized summary, 150-250 words."
+    return {
+        "instruction": "A clear, well-organized summary, 150-250 words.",
+        "kind": "words",
+        "max_words": 250,
+    }
+
+
+def _constraint_from_state(state: ResearchState) -> Dict[str, Any]:
+    if not state.output_format or state.output_format.get("style") == "default":
+        return _parse_length_constraint(state.research_topic)
+    output_format = state.output_format
+    style = output_format["style"]
+    constraint = {
+        "instruction": output_format.get("instruction", "Use a clear summary format."),
+        "kind": "paragraph" if style == "paragraph" else style,
+    }
+    if output_format.get("count") is not None:
+        constraint["count"] = output_format["count"]
+    if output_format.get("max_words") is not None:
+        constraint["max_words"] = output_format["max_words"]
+    if output_format.get("max_sentences") is not None:
+        constraint["max_sentences"] = output_format["max_sentences"]
+    return constraint
+
+
+def _enforce_format(summary: str, constraint: Dict[str, Any]) -> str:
+    """Apply deterministic upper bounds after generation.
+
+    The prompt controls quality and selection; this guard prevents a model
+    from ignoring a user's explicit size or shape request.
+    """
+    text = summary.strip()
+    kind = constraint["kind"]
+
+    if kind == "words" and constraint.get("max_words"):
+        words = text.split()
+        if len(words) > constraint["max_words"]:
+            text = " ".join(words[:constraint["max_words"]]).rstrip(" .,;:") + "..."
+
+    if kind == "sentences":
+        max_sentences = constraint.get("max_sentences") or constraint.get("count")
+        if max_sentences:
+            parts = re.split(r"(?<=[.!?])\s+", text)
+            text = " ".join(parts[:max_sentences]).strip()
+
+    if kind == "bullets":
+        lines = [
+            re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", line).strip()
+            for line in text.splitlines()
+        ]
+        lines = [line for line in lines if line]
+        if len(lines) == 1 and constraint["count"] > 1:
+            lines = [
+                part.strip()
+                for part in re.split(r"(?<=[.!?])\s+", lines[0])
+                if part.strip()
+            ]
+        if len(lines) > constraint["count"]:
+            lines = lines[:constraint["count"]]
+        text = "\n".join(f"- {line}" for line in lines)
+
+    if kind == "paragraph":
+        text = re.sub(r"\n{2,}", "\n\n", text)
+
+    return text
 
 
 def _count_tokens(text: str) -> int:
@@ -82,20 +187,20 @@ def _chunk_for_map(full_text: str, chunk_tokens: int) -> List[str]:
 
 
 class SummarizerAgent:
-    MAX_CONCURRENT_MAP_CALLS = 4
-
     def __init__(self, llm=None):
         self.llm = llm or get_llm(
             temperature=0.3,
             model_override=config.summarization_model,
+            provider_override="groq",
         )
+        self.max_concurrent_map_calls = config.summary_max_concurrent_map_calls
 
     async def _call_llm(self, prompt_template: str, **kwargs) -> str:
         prompt = ChatPromptTemplate.from_messages([("human", prompt_template)])
         chain = prompt | self.llm | StrOutputParser()
         return await chain.ainvoke(kwargs)
 
-    async def _summarize_single_doc(self, doc_id: str, length_instruction: str) -> Dict[str, Any]:
+    async def _summarize_single_doc(self, doc_id: str, length_constraint: Dict[str, Any]) -> Dict[str, Any]:
         try:
             chunks = await asyncio.to_thread(get_all_chunks, doc_id)
         except Exception as e:
@@ -115,12 +220,16 @@ class SummarizerAgent:
                 summary = await self._call_llm(
                     SINGLE_PASS_PROMPT,
                     document=full_text,
-                    length_instruction=length_instruction,
+                    length_instruction=length_constraint["instruction"],
                 )
             except Exception as e:
                 logger.error(f"[summarize] single-pass failed for doc_id={doc_id}: {e}")
                 return {"doc_id": doc_id, "error": f"Summarization failed: {e}"}
-            return {"doc_id": doc_id, "source_name": source_name, "summary": summary.strip()}
+            return {
+                "doc_id": doc_id,
+                "source_name": source_name,
+                "summary": _enforce_format(summary, length_constraint),
+            }
 
         # Document too large for one pass — map-reduce.
         windows = _chunk_for_map(full_text, config.summary_map_chunk_tokens)
@@ -129,9 +238,10 @@ class SummarizerAgent:
             f"{len(windows)} map window(s)"
         )
 
-        semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_MAP_CALLS)
+        semaphore = asyncio.Semaphore(self.max_concurrent_map_calls)
 
         async def map_one(window: str, idx: int) -> str:
+            await asyncio.sleep(idx * 1.5)
             async with semaphore:
                 try:
                     return await self._call_llm(MAP_PROMPT, section=window)
@@ -152,13 +262,17 @@ class SummarizerAgent:
             final_summary = await self._call_llm(
                 REDUCE_PROMPT,
                 partial_summaries=combined,
-                length_instruction=length_instruction,
+                length_instruction=length_constraint["instruction"],
             )
         except Exception as e:
             logger.error(f"[summarize] reduce step failed for doc_id={doc_id}: {e}")
             return {"doc_id": doc_id, "error": f"Failed to combine section summaries: {e}"}
 
-        return {"doc_id": doc_id, "source_name": source_name, "summary": final_summary.strip()}
+        return {
+            "doc_id": doc_id,
+            "source_name": source_name,
+            "summary": _enforce_format(final_summary, length_constraint),
+        }
 
     async def summarize(self, state: ResearchState) -> Dict[str, Any]:
         doc_ids = state.selected_doc_ids
@@ -167,13 +281,14 @@ class SummarizerAgent:
                 "error": "No document selected to summarize.",
                 "final_report": "Please select or upload a document first, then ask me to summarize it.",
                 "citations": [],
+                "summary_format": None,
                 "current_stage": "complete",
             }
 
-        length_instruction = _parse_length_constraint(state.research_topic)
+        length_constraint = _constraint_from_state(state)
 
         results = await asyncio.gather(*[
-            self._summarize_single_doc(doc_id, length_instruction) for doc_id in doc_ids
+            self._summarize_single_doc(doc_id, length_constraint) for doc_id in doc_ids
         ])
 
         succeeded = [r for r in results if "summary" in r]
@@ -185,6 +300,7 @@ class SummarizerAgent:
                 "error": f"Summarization failed for all selected document(s): {error_detail}",
                 "final_report": "I couldn't generate a summary — none of the selected documents had readable content.",
                 "citations": [],
+                "summary_format": length_constraint,
                 "current_stage": "complete",
             }
 
@@ -215,5 +331,6 @@ class SummarizerAgent:
         return {
             "final_report": final_report,
             "citations": citations,
+            "summary_format": length_constraint,
             "current_stage": "complete",
         }

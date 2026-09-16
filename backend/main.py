@@ -221,13 +221,14 @@ def _summarize(node_name: str, output: dict) -> dict:
             "citations": output.get("citations", []),
             "route_decision": output.get("route_decision"),
         }
-    if node_name == "synthesize":
+    if node_name in ("synthesize", "summarize"):
         if "error" in output:
             return {"node": node_name, "error": output["error"]}
         return {
             "node": node_name,
             "final_report": output.get("final_report", ""),
             "citations": output.get("citations", []),
+            "summary_format": output.get("summary_format"),
         }
     return {"node": node_name}
 
