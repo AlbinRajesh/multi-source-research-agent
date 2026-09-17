@@ -47,8 +47,18 @@ class SynthesizerAgent:
         # hidden reasoning tokens draw from the same max_tokens budget as the
         # visible answer, so a tight ceiling here silently truncates the
         # completion to nothing before any output text is written.
-        self.llm = llm or get_llm(temperature=0.3, max_tokens=2000)
-        self.structured_llm = llm or get_llm(temperature=0.3, max_tokens=8000)
+        self.llm = llm or get_llm(
+            temperature=0.3,
+            provider_override="groq",
+            model_override="openai/gpt-oss-120b",
+            max_tokens=2000,
+        )
+        self.structured_llm = llm or get_llm(
+            temperature=0.3,
+            provider_override="groq",
+            model_override="openai/gpt-oss-120b",
+            max_tokens=8000,
+        )
         self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")
     async def synthesize(self, state: ResearchState) -> Dict[str, Any]:
         try:

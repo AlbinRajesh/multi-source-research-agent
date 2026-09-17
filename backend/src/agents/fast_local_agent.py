@@ -28,7 +28,7 @@ class FastLocalAgent:
     def __init__(self, llm=None, local_provider=None):
         self.llm = llm or get_llm(
             temperature=0.0,
-            model_override="openai/gpt-oss-120b",
+            model_override="openai/gpt-oss-20b",
             provider_override="groq",
             max_tokens=800,
         )

@@ -24,6 +24,7 @@ def get_llm(
     model_override_key: Optional[str] = None,
     provider_override: Optional[str] = None,
     max_tokens: Optional[int] = None,
+    api_key_override: Optional[str] = None,
 ) -> BaseChatModel:
     """Get an LLM instance based on config.
 
@@ -35,6 +36,7 @@ def get_llm(
             model" without hardcoding a model name in the agent itself
         provider_override: explicit provider, overrides config.model_provider
         max_tokens: maximum tokens to generate in the completion
+        api_key_override: provider API key override for per-node isolation
     """
     if model_override:
         model_name = model_override
@@ -65,25 +67,27 @@ def get_llm(
             )
 
         elif provider == "openai":
-            if not config.openai_api_key:
+            api_key = api_key_override or config.openai_api_key
+            if not api_key:
                 raise ConfigurationError("OPENAI_API_KEY not set")
             logger.info(f"LLM: openai/{model_name}")
             return ChatOpenAI(
                 model=model_name,
                 base_url=f"{config.openai_base_url}/v1",
-                api_key=config.openai_api_key,
+                api_key=api_key,
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
 
         elif provider == "groq":
-            if not config.groq_api_key:
+            api_key = api_key_override or config.groq_api_key
+            if not api_key:
                 raise ConfigurationError("GROQ_API_KEY not set")
             logger.info(f"LLM: groq/{model_name}")
             return ChatOpenAI(
                 model=model_name,
                 base_url=config.groq_base_url,
-                api_key=config.groq_api_key,
+                api_key=api_key,
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
@@ -111,12 +115,13 @@ def get_llm(
             )
 
         elif provider == "gemini":
-            if not config.google_api_key:
-                raise ConfigurationError("GOOGLE_API_KEY not set")
+            google_api_key = api_key_override or config.google_api_key
+            if not google_api_key:
+                raise ConfigurationError("GOOGLE_API_KEY or a Gemini API key override is not set")
             logger.info(f"LLM: gemini/{model_name}")
             return ChatGoogleGenerativeAI(
                 model=model_name,
-                google_api_key=config.google_api_key,
+                google_api_key=google_api_key,
                 temperature=temperature,
                 max_output_tokens=max_tokens,
             )

@@ -188,16 +188,21 @@ def _chunk_for_map(full_text: str, chunk_tokens: int) -> List[str]:
 
 class SummarizerAgent:
     def __init__(self, llm=None):
-        self.llm = llm or get_llm(
+        self.map_llm = llm or get_llm(
             temperature=0.3,
-            model_override=config.summarization_model,
+            model_override="openai/gpt-oss-20b",
+            provider_override="groq",
+        )
+        self.reduce_llm = llm or get_llm(
+            temperature=0.3,
+            model_override="openai/gpt-oss-120b",
             provider_override="groq",
         )
         self.max_concurrent_map_calls = config.summary_max_concurrent_map_calls
 
-    async def _call_llm(self, prompt_template: str, **kwargs) -> str:
+    async def _call_llm(self, llm, prompt_template: str, **kwargs) -> str:
         prompt = ChatPromptTemplate.from_messages([("human", prompt_template)])
-        chain = prompt | self.llm | StrOutputParser()
+        chain = prompt | llm | StrOutputParser()
         return await chain.ainvoke(kwargs)
 
     async def _summarize_single_doc(self, doc_id: str, length_constraint: Dict[str, Any]) -> Dict[str, Any]:
@@ -218,6 +223,7 @@ class SummarizerAgent:
         if total_tokens <= config.summary_map_threshold_tokens:
             try:
                 summary = await self._call_llm(
+                    self.reduce_llm,
                     SINGLE_PASS_PROMPT,
                     document=full_text,
                     length_instruction=length_constraint["instruction"],
@@ -244,7 +250,7 @@ class SummarizerAgent:
             await asyncio.sleep(idx * 1.5)
             async with semaphore:
                 try:
-                    return await self._call_llm(MAP_PROMPT, section=window)
+                    return await self._call_llm(self.map_llm, MAP_PROMPT, section=window)
                 except Exception as e:
                     logger.warning(f"[summarize] map call {idx} failed for doc_id={doc_id}: {e}")
                     return ""  # dropped section degrades quality, doesn't abort the whole summary
@@ -260,6 +266,7 @@ class SummarizerAgent:
         combined = "\n\n".join(f"[Section {i+1}] {s}" for i, s in enumerate(partial_summaries))
         try:
             final_summary = await self._call_llm(
+                self.reduce_llm,
                 REDUCE_PROMPT,
                 partial_summaries=combined,
                 length_instruction=length_constraint["instruction"],

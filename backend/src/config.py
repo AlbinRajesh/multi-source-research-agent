@@ -19,15 +19,21 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
     openai_base_url: str = "https://api.openai.com"
     google_api_key: Optional[str] = None
+    gemini_verifier_api_key: Optional[str] = None
     llamacpp_base_url: str = "http://localhost:8080"
     groq_api_key: Optional[str] = None
+    groq_verifier_api_key: Optional[str] = None
     groq_base_url: str = "https://api.groq.com/openai/v1"
     claim_extraction_model: str = "qwen2.5:3b-instruct"
     gemini_planner_model: str = "gemini-2.5-flash-lite"
     gemini_claim_extraction_model: str = "gemini-2.5-flash-lite"
+    gemini_verifier_model: str = "gemini-3.5-flash-lite"
     nvidia_api_key: Optional[str] = None
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_verifier_model: str = "openai/gpt-oss-20b"
+    router_model: str = "llama-3.1-8b-instant"
+
+    verifier_max_concurrent_calls: int = 3 
 
     # Search
     search_provider: str = "tavily"         # tavily | searxng

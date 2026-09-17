@@ -13,6 +13,7 @@ from typing import Dict, Any, Optional
 
 from langchain_core.prompts import ChatPromptTemplate
 from src.state import ResearchState
+from src.config import config
 from src.prompts.router_prompt import ROUTER_SYSTEM_PROMPT, ROUTER_USER_TEMPLATE
 from src.utils.llm_factory import get_llm
 from src.processing.output_format import parse_output_format
@@ -103,11 +104,11 @@ class RouterAgent:
         self.llm = llm or get_llm(
             temperature=0.0,
             provider_override="groq",
-            model_override="openai/gpt-oss-120b",
+            model_override=config.router_model,
         )
         self.chat_llm = get_llm(
             temperature=0.6,
-            model_override="openai/gpt-oss-120b",
+            model_override=config.router_model,
             provider_override="groq",
         )
 
@@ -170,7 +171,7 @@ class RouterAgent:
             result = await chain.ainvoke({"message": topic})
             label = result.content.strip().lower()
         except Exception as e:
-            logger.warning(f"Router classification failed, defaulting to research: {e}")
+            logger.error(f"[router] classifier call failed, defaulting to research: {e}")
             label = "research"
 
         if "capability" in label:

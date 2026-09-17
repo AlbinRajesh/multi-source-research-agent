@@ -28,14 +28,15 @@ logger = logging.getLogger(__name__)
 
 
 class VerificationAgent:
-    def __init__(self, llm=None, max_concurrent: int = 6):
+    def __init__(self, llm=None, max_concurrent: int = None):
+        self.max_concurrent = max_concurrent or config.verifier_max_concurrent_calls
         self.llm = llm or get_llm(
             temperature=0.0,
-            model_override=config.nvidia_verifier_model,
-            provider_override="nvidia",
+            model_override=config.gemini_verifier_model,
+            provider_override="gemini",
+            api_key_override=config.gemini_verifier_api_key,
             max_tokens=1500,
         )
-        self.max_concurrent = max_concurrent
         self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")
 
     async def verify(self, state: ResearchState) -> Dict[str, Any]:
@@ -89,7 +90,7 @@ class VerificationAgent:
                     tracker=state.token_tracker,
                     node="verify",
                     model=self.model_name,
-                    provider="nvidia",
+                    provider="gemini",
                 )
                     logger.info(f"[verify_timing] source={url} elapsed={time.perf_counter() - start_time:.2f}s")
                     logger.info(f"[raw_length] verify source={url} chars={len(raw)}")
@@ -161,9 +162,12 @@ class VerificationAgent:
         if not raw:
             return []
         if raw.startswith("```"):
-            raw = raw.strip("`")
-            if raw.startswith("json"):
-                raw = raw[4:]
+            lines = raw.splitlines()
+            if lines and lines[0].strip().lower() in ("```", "```json"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            raw = "\n".join(lines).strip()
 
         try:
             data = json.loads(raw, strict=False)
