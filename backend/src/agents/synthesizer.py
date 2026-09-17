@@ -49,14 +49,16 @@ class SynthesizerAgent:
         # completion to nothing before any output text is written.
         self.llm = llm or get_llm(
             temperature=0.3,
-            provider_override="groq",
-            model_override="openai/gpt-oss-120b",
+            provider_override=config.synthesizer_provider,
+            model_override=config.synthesizer_model,
+            api_key_override=config.synthesizer_api_key,
             max_tokens=2000,
         )
         self.structured_llm = llm or get_llm(
             temperature=0.3,
-            provider_override="groq",
-            model_override="openai/gpt-oss-120b",
+            provider_override=config.synthesizer_provider,
+            model_override=config.synthesizer_model,
+            api_key_override=config.synthesizer_api_key,
             max_tokens=8000,
         )
         self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")

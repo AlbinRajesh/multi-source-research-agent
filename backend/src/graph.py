@@ -117,7 +117,12 @@ def create_research_graph(checkpointer=None):
             logger.error(f"Planning invalid: {state.error}")
             return END
         if getattr(state.plan, "mode", None) == "fast_local" and state.plan.complexity == "simple":
-            return "fast_local_answer"
+            # Only use the fast-local path when the user has an actual document
+            # selected — otherwise there is nothing to answer from locally, and
+            # we must fall through to the normal web search pipeline instead.
+            if state.selected_doc_ids:
+                return "fast_local_answer"
+            logger.info("[graph] fast_local planned but no doc selected — falling through to web search")
         return "search"
 
     def after_search(state: ResearchState) -> str:

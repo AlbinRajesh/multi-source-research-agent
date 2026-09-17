@@ -30,13 +30,19 @@ logger = logging.getLogger(__name__)
 class VerificationAgent:
     def __init__(self, llm=None, max_concurrent: int = None):
         self.max_concurrent = max_concurrent or config.verifier_max_concurrent_calls
+        verifier_key = (
+            config.verifier_api_key
+            or (config.gemini_verifier_api_key if config.verifier_provider == "gemini" else None)
+            or (config.groq_verifier_api_key if config.verifier_provider == "groq" else None)
+        )
         self.llm = llm or get_llm(
             temperature=0.0,
-            model_override=config.gemini_verifier_model,
-            provider_override="gemini",
-            api_key_override=config.gemini_verifier_api_key,
+            model_override=config.verifier_model,
+            provider_override=config.verifier_provider,
+            api_key_override=verifier_key,
             max_tokens=1500,
         )
+        self.provider = config.verifier_provider
         self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")
 
     async def verify(self, state: ResearchState) -> Dict[str, Any]:
@@ -90,7 +96,7 @@ class VerificationAgent:
                     tracker=state.token_tracker,
                     node="verify",
                     model=self.model_name,
-                    provider="gemini",
+                    provider=self.provider,
                 )
                     logger.info(f"[verify_timing] source={url} elapsed={time.perf_counter() - start_time:.2f}s")
                     logger.info(f"[raw_length] verify source={url} chars={len(raw)}")

@@ -8,6 +8,7 @@ from typing import Dict, Any
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
+from src.config import config
 from src.state import ResearchState
 from src.search_providers.local_rag_provider import LocalRAGProvider
 from src.utils.llm_factory import get_llm
@@ -28,8 +29,9 @@ class FastLocalAgent:
     def __init__(self, llm=None, local_provider=None):
         self.llm = llm or get_llm(
             temperature=0.0,
-            model_override="openai/gpt-oss-20b",
-            provider_override="groq",
+            model_override=config.fast_local_model,
+            provider_override=config.fast_local_provider,
+            api_key_override=config.fast_local_api_key,
             max_tokens=800,
         )
         self.local_provider = local_provider or LocalRAGProvider()
@@ -39,11 +41,20 @@ class FastLocalAgent:
             logger.info("[fast_local] no local sources available — escalating to full pipeline")
             return {"route_decision": "escalate"}
 
+        # Safety: never search with doc_ids=None — that disables the Qdrant
+        # filter entirely and returns results from ALL indexed documents,
+        # including deleted ones still present as tombstoned chunks.
+        # If no specific document is selected, escalate rather than hallucinate
+        # an answer from a document the user didn't choose.
+        if not state.selected_doc_ids:
+            logger.info("[fast_local] no document selected — escalating to full web pipeline")
+            return {"route_decision": "escalate"}
+
         query = state.research_topic
         results = await self.local_provider.search(
             query,
             max_results=5,
-            doc_ids=state.selected_doc_ids or None,
+            doc_ids=state.selected_doc_ids,  # always a non-empty list at this point
         )
 
         if not results or len(results[0].content or "") < 50:

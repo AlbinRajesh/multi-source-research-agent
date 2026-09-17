@@ -190,13 +190,15 @@ class SummarizerAgent:
     def __init__(self, llm=None):
         self.map_llm = llm or get_llm(
             temperature=0.3,
-            model_override="openai/gpt-oss-20b",
-            provider_override="groq",
+            model_override=config.summarizer_map_model,
+            provider_override=config.summarizer_map_provider,
+            api_key_override=config.summarizer_map_api_key,
         )
         self.reduce_llm = llm or get_llm(
             temperature=0.3,
-            model_override="openai/gpt-oss-120b",
-            provider_override="groq",
+            model_override=config.summarizer_reduce_model,
+            provider_override=config.summarizer_reduce_provider,
+            api_key_override=config.summarizer_reduce_api_key,
         )
         self.max_concurrent_map_calls = config.summary_max_concurrent_map_calls
 

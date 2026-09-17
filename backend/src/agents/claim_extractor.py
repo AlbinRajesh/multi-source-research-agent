@@ -44,12 +44,13 @@ class ClaimExtractionAgent:
         # fast/cheap model — this stage runs once per document, keep it light
         self.llm = llm or get_llm(
             temperature=0.0,
-            model_override=config.gemini_claim_extraction_model,
-            provider_override="gemini",
+            model_override=config.claim_extraction_model,
+            provider_override=config.claim_extraction_provider,
+            api_key_override=config.claim_extraction_api_key,
             max_tokens=1200,
         )
         self.max_concurrent = max_concurrent
-        self.model_name = config.gemini_claim_extraction_model
+        self.model_name = config.claim_extraction_model
         self._boilerplate_re = re.compile("|".join(self.BOILERPLATE_PATTERNS), re.IGNORECASE)
 
     def _is_boilerplate(self, text: str) -> bool:
