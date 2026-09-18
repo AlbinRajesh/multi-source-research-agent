@@ -749,3 +749,36 @@ relevance_filter	13.13s
 verify	1.76s
 synthesize	13.60s
 Total	~63.2s
+<!-- ------------------------------------------------------------------------------------------ -->
+[User Query] 
+     │
+     ▼
+[Router Agent] ──(Casual / Summary)──► Direct Answer / Map-Reduce Summarizer
+     │ (Research Intent)
+     ▼
+[Planner Agent] (Complexity Tiering: Simple / Moderate / Complex)
+     │
+     ▼
+[Retriever Agent] (Parallel Tavily Search + Full HTML Scraping + Jaccard Near-Dedup + Domain Credibility Scoring)
+     │
+     ▼
+[Chunk Relevance Filter] (MiniLM Cross-Encoder reranking)
+     │
+     ▼
+[Claim Extractor] (Deconstructs text into atomic, checkable factual claims: stats, dates, roles, events)
+     │
+     ▼
+[Relevance Filter] (Keeps top topic-relevant claims with per-source guarantee floor)
+     │
+     ▼
+[Verification Agent] (Checks groundedness against source text; assigns 'verified', 'single_source', 'conflicting', 'unconfirmed')
+     │
+     ▼
+[Check Retry Node] ──(Weak claims ratio > 40%)──► [Refine Queries] ──► [Loop back to Retriever]
+     │                                                     ▲ (Banks confirmed claims,
+     │ (Claims verified or retries exhausted)               │  targets only weak claims)
+     ▼                                                     │
+[Synthesizer Agent] (Strictly bottom-up synthesis using ONLY verified claims + APA inline citations)
+     │
+     ▼
+[SSE Stream & UI] (Real-time progress rail, confidence badges, clickable citation sources)
