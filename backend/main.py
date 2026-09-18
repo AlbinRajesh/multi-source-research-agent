@@ -55,6 +55,16 @@ class ResumeRequest(BaseModel):
     thread_id: str
 
 
+DOCUMENT_SELECTION_REQUIRED = {
+    "code": "DOCUMENT_SELECTION_REQUIRED",
+    "message": (
+        "No document is selected for local research. "
+        "Please upload and select a document first, then try again."
+    ),
+    "requires_document": True,
+}
+
+
 def _resolve_source_mode(req: ResearchRequest) -> Literal["web", "local", "hybrid"]:
     if req.source_mode:
         return req.source_mode
@@ -64,6 +74,12 @@ def _resolve_source_mode(req: ResearchRequest) -> Literal["web", "local", "hybri
     if {"web", "local"}.issubset(requested_sources):
         return "hybrid"
     return "web"
+
+
+def _document_selection_error(req: ResearchRequest, source_mode: str) -> Optional[dict]:
+    if source_mode == "local" and not req.selected_doc_ids:
+        return dict(DOCUMENT_SELECTION_REQUIRED)
+    return None
 
 
 @app.on_event("startup")
@@ -91,6 +107,9 @@ async def research(req: ResearchRequest):
 
     source_mode = _resolve_source_mode(req)
     sources = ["web", "local"] if source_mode == "hybrid" else [source_mode]
+    validation_error = _document_selection_error(req, source_mode)
+    if validation_error:
+        raise HTTPException(status_code=400, detail=validation_error)
 
     try:
         if req.persist:
@@ -152,6 +171,7 @@ async def research_stream(req: ResearchRequest):
 
     source_mode = _resolve_source_mode(req)
     sources = ["web", "local"] if source_mode == "hybrid" else [source_mode]
+    validation_error = _document_selection_error(req, source_mode)
 
     initial_state = ResearchState(
         research_topic=req.topic,
@@ -163,6 +183,12 @@ async def research_stream(req: ResearchRequest):
     graph = _graph
 
     async def event_generator() -> AsyncGenerator[dict, None]:
+        if validation_error:
+            yield {
+                "event": "error",
+                "data": json.dumps(validation_error),
+            }
+            return
         try:
             async for update in graph.astream(initial_state, config=run_config, stream_mode="updates"):
                 node_name = list(update.keys())[0]

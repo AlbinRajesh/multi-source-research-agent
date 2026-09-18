@@ -33,24 +33,13 @@ MIN_FREE_VRAM_FOR_GPU_EMBED_BYTES = 1.5 * 1024**3  # 1.5GB
 
 
 def _pick_embedding_device() -> str:
-    """Embedding model defaults to CPU. It only moves to GPU if there's
-    enough free VRAM left over — checked *after* the reranker/Ollama have
-    already claimed theirs, since embedding is lazy-loaded on first call."""
+    """Forces GPU usage if CUDA is available, otherwise falls back to CPU."""
     if not torch.cuda.is_available():
+        logger.info("CUDA is not available — falling back to CPU.")
         return "cpu"
-    try:
-        free_bytes, _total_bytes = torch.cuda.mem_get_info()
-    except Exception as e:
-        logger.warning(f"Could not query free VRAM ({e}); defaulting embedding model to CPU.")
-        return "cpu"
-
-    if free_bytes >= MIN_FREE_VRAM_FOR_GPU_EMBED_BYTES:
-        logger.info(f"{free_bytes / 1024**3:.2f}GB free VRAM — placing embedding model on GPU.")
-        return "cuda"
-
-    logger.info(f"Only {free_bytes / 1024**3:.2f}GB free VRAM — keeping embedding model on CPU.")
-    return "cpu"
-
+    
+    logger.info("CUDA is available — forcing embedding model onto GPU.")
+    return "cuda"
 
 def _get_model() -> SentenceTransformer:
     """Lazily load the embedding model on first use, then reuse it.

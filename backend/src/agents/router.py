@@ -13,6 +13,7 @@ from typing import Dict, Any, Optional
 
 from langchain_core.prompts import ChatPromptTemplate
 from src.state import ResearchState
+from src.config import config
 from src.prompts.router_prompt import ROUTER_SYSTEM_PROMPT, ROUTER_USER_TEMPLATE
 from src.utils.llm_factory import get_llm
 from src.processing.output_format import parse_output_format
@@ -46,12 +47,18 @@ GREETING_PATTERNS = [
 # capability patterns ("what is this ... about").
 SUMMARY_PATTERNS = [
     r"\bsummar(y|ize|ise|isation|ization)\b",
+    # Typo-tolerant: "summery", "sumary", "summry", "sumery" etc.
+    r"\bsum{1,2}[ae]r[yi]\b",
     r"\btl;?dr\b",
     r"\bwhat (is|'s) (this|the|it) (document|doc|pdf|file|paper|report) about\b",
     r"\bwhat('s| is) (it|this) about\b",
     r"\bgive me (a|the) (summary|overview|gist|rundown)\b",
     r"\bkey (points|takeaways) (of|from) (this|the)\b",
     r"\bcan you (summarize|summarise|sum up)\b",
+    # Catch "give me the summery of the pdf" and similar constructs
+    r"\bgive me.{0,20}(of|from|about).{0,20}(pdf|document|doc|file|paper|report)\b",
+    r"\b(summary|summery|summar[iy]).{0,20}(pdf|document|doc|file|paper|report)\b",
+    r"\b(pdf|document|doc|file|paper|report).{0,20}(summary|summery|summar[iy])\b",
 ]
 
 # Enterprise-grade two-tier matching vocabularies
@@ -102,13 +109,15 @@ class RouterAgent:
     def __init__(self, llm=None):
         self.llm = llm or get_llm(
             temperature=0.0,
-            provider_override="groq",
-            model_override="openai/gpt-oss-120b",
+            provider_override=config.router_provider,
+            model_override=config.router_model,
+            api_key_override=config.router_api_key,
         )
         self.chat_llm = get_llm(
             temperature=0.6,
-            model_override="openai/gpt-oss-120b",
-            provider_override="groq",
+            model_override=config.router_model,
+            provider_override=config.router_provider,
+            api_key_override=config.router_api_key,
         )
 
     async def route(self, state: ResearchState) -> Dict[str, Any]:
@@ -170,7 +179,7 @@ class RouterAgent:
             result = await chain.ainvoke({"message": topic})
             label = result.content.strip().lower()
         except Exception as e:
-            logger.warning(f"Router classification failed, defaulting to research: {e}")
+            logger.error(f"[router] classifier call failed, defaulting to research: {e}")
             label = "research"
 
         if "capability" in label:

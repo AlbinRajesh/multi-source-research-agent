@@ -41,6 +41,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+DOCUMENT_SELECTION_REQUIRED = (
+    "No document is selected for local research. "
+    "Please upload and select a document first, then try again."
+)
+
 
 
 # =============================================================================
@@ -117,7 +122,12 @@ def create_research_graph(checkpointer=None):
             logger.error(f"Planning invalid: {state.error}")
             return END
         if getattr(state.plan, "mode", None) == "fast_local" and state.plan.complexity == "simple":
-            return "fast_local_answer"
+            # Only use the fast-local path when the user has an actual document
+            # selected — otherwise there is nothing to answer from locally, and
+            # we must fall through to the normal web search pipeline instead.
+            if state.selected_doc_ids:
+                return "fast_local_answer"
+            logger.info("[graph] fast_local planned but no doc selected — falling through to web search")
         return "search"
 
     def after_search(state: ResearchState) -> str:
@@ -346,6 +356,19 @@ async def run_research(
     source_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     logger.info(f"Starting research on: {topic}")
+    mode = source_mode or (
+        "hybrid" if {"web", "local"}.issubset(set(sources_available or []))
+        else "local" if (sources_available or ["web"]) == ["local"]
+        else "web"
+    )
+    if mode == "local" and not selected_doc_ids:
+        logger.info("[input_validation] local research requested without selected documents")
+        return {
+            "error": DOCUMENT_SELECTION_REQUIRED,
+            "error_code": "DOCUMENT_SELECTION_REQUIRED",
+            "requires_document": True,
+            "current_stage": "planning",
+        }
 
     checkpointer = None
     run_config: Dict[str, Any] = {}
@@ -363,11 +386,6 @@ async def run_research(
         if existing and existing.values:
             prior_history = existing.values.get("conversation_history", [])
 
-    mode = source_mode or (
-        "hybrid" if {"web", "local"}.issubset(set(sources_available or []))
-        else "local" if (sources_available or ["web"]) == ["local"]
-        else "web"
-    )
     sources = ["web", "local"] if mode == "hybrid" else [mode]
     # Local RAG fires only if: feature flag on AND caller explicitly
     # selected documents. Never fall back to "search the whole store."
@@ -424,6 +442,14 @@ async def run_research_with_persistence(
         else "local" if (sources_available or ["web"]) == ["local"]
         else "web"
     )
+    if mode == "local" and not selected_doc_ids:
+        logger.info("[input_validation] local research requested without selected documents")
+        return {
+            "error": DOCUMENT_SELECTION_REQUIRED,
+            "error_code": "DOCUMENT_SELECTION_REQUIRED",
+            "requires_document": True,
+            "current_stage": "planning",
+        }
     sources = ["web", "local"] if mode == "hybrid" else [mode]
     if config.local_rag_enabled and "local" not in sources and selected_doc_ids:
         sources = sources + ["local"]

@@ -28,14 +28,21 @@ logger = logging.getLogger(__name__)
 
 
 class VerificationAgent:
-    def __init__(self, llm=None, max_concurrent: int = 6):
+    def __init__(self, llm=None, max_concurrent: int = None):
+        self.max_concurrent = max_concurrent or config.verifier_max_concurrent_calls
+        verifier_key = (
+            config.verifier_api_key
+            or (config.gemini_verifier_api_key if config.verifier_provider == "gemini" else None)
+            or (config.groq_verifier_api_key if config.verifier_provider == "groq" else None)
+        )
         self.llm = llm or get_llm(
             temperature=0.0,
-            model_override=config.nvidia_verifier_model,
-            provider_override="nvidia",
-            max_tokens=1200,
+            model_override=config.verifier_model,
+            provider_override=config.verifier_provider,
+            api_key_override=verifier_key,
+            max_tokens=1500,
         )
-        self.max_concurrent = max_concurrent
+        self.provider = config.verifier_provider
         self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")
 
     async def verify(self, state: ResearchState) -> Dict[str, Any]:
@@ -89,7 +96,7 @@ class VerificationAgent:
                     tracker=state.token_tracker,
                     node="verify",
                     model=self.model_name,
-                    provider="nvidia",
+                    provider=self.provider,
                 )
                     logger.info(f"[verify_timing] source={url} elapsed={time.perf_counter() - start_time:.2f}s")
                     logger.info(f"[raw_length] verify source={url} chars={len(raw)}")
@@ -161,9 +168,12 @@ class VerificationAgent:
         if not raw:
             return []
         if raw.startswith("```"):
-            raw = raw.strip("`")
-            if raw.startswith("json"):
-                raw = raw[4:]
+            lines = raw.splitlines()
+            if lines and lines[0].strip().lower() in ("```", "```json"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            raw = "\n".join(lines).strip()
 
         try:
             data = json.loads(raw, strict=False)
@@ -185,7 +195,7 @@ class VerificationAgent:
         return []
 
     @staticmethod
-    def _get_relevant_excerpt(text: str, claims: list, window: int = 2000, max_total: int = 4000) -> str:
+    def _get_relevant_excerpt(text: str, claims: list, window: int = 2000, max_total: int = 6000) -> str:
         """Pull text windows around claim-keyword matches instead of blind truncation."""
         if len(text) <= max_total:
             return text

@@ -73,8 +73,9 @@ class PlannerAgent:
     def __init__(self, llm=None, max_retries: int = 3):
         self.llm = llm or get_llm(
             temperature=0.5,
-            model_override=config.gemini_planner_model,
-            provider_override="gemini",
+            model_override=config.planner_model,
+            provider_override=config.planner_provider,
+            api_key_override=config.planner_api_key,
         )
         self.max_retries = max_retries
         self.model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown")

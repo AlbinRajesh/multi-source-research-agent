@@ -19,15 +19,52 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
     openai_base_url: str = "https://api.openai.com"
     google_api_key: Optional[str] = None
+    gemini_verifier_api_key: Optional[str] = None
     llamacpp_base_url: str = "http://localhost:8080"
     groq_api_key: Optional[str] = None
+    groq_verifier_api_key: Optional[str] = None
     groq_base_url: str = "https://api.groq.com/openai/v1"
-    claim_extraction_model: str = "qwen2.5:3b-instruct"
-    gemini_planner_model: str = "gemini-2.5-flash-lite"
-    gemini_claim_extraction_model: str = "gemini-2.5-flash-lite"
+    router_provider: str = "groq"
+    router_model: str = "llama-3.1-8b-instant"
+    router_api_key: Optional[str] = None
+
+    planner_provider: str = "gemini"
+    planner_model: str = "gemini-3.5-flash-lite"
+    planner_api_key: Optional[str] = None
+
+    claim_extraction_provider: str = "gemini"
+    claim_extraction_model: str = "gemini-3.5-flash-lite"
+    claim_extraction_api_key: Optional[str] = None
+
+    verifier_provider: str = "gemini"
+    verifier_model: str = "gemini-3.5-flash-lite"
+    verifier_api_key: Optional[str] = None
+
+    synthesizer_provider: str = "groq"
+    synthesizer_model: str = "openai/gpt-oss-120b"
+    synthesizer_api_key: Optional[str] = None
+
+    summarizer_map_provider: str = "groq"
+    summarizer_map_model: str = "openai/gpt-oss-20b"
+    summarizer_map_api_key: Optional[str] = None
+
+    summarizer_reduce_provider: str = "groq"
+    summarizer_reduce_model: str = "openai/gpt-oss-120b"
+    summarizer_reduce_api_key: Optional[str] = None
+
+    fast_local_provider: str = "groq"
+    fast_local_model: str = "openai/gpt-oss-20b"
+    fast_local_api_key: Optional[str] = None
+    # Legacy model settings retained for compatibility with external callers.
+    claim_extraction_model_legacy: str = "qwen2.5:3b-instruct"
+    gemini_planner_model: str = "gemini-3.5-flash-lite"
+    gemini_claim_extraction_model: str = "gemini-3.5-flash-lite"
+    gemini_verifier_model: str = "gemini-3.5-flash-lite"
     nvidia_api_key: Optional[str] = None
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_verifier_model: str = "openai/gpt-oss-20b"
+
+    verifier_max_concurrent_calls: int = 3 
 
     # Search
     search_provider: str = "tavily"         # tavily | searxng
@@ -74,5 +111,5 @@ class Settings(BaseSettings):
 
 config = Settings()
 logging.getLogger(__name__).info(
-    f"[startup] gemini_planner_model={config.gemini_planner_model!r}"
+    f"[startup] planner_provider={config.planner_provider!r} planner_model={config.planner_model!r}"
 )
